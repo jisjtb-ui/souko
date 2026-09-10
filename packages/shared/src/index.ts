@@ -21,6 +21,11 @@ export * from './geometry/polygon.js';
 export * from './sim/navGrid.js';
 export * from './sim/astar.js';
 export * from './sim/travel.js';
+export * from './sim/random.js';
+export * from './sim/racks.js';
+export * from './sim/eventGeneration.js';
+export * from './sim/slotting.js';
+export * from './sim/stacking.js';
 
 export * from './io/csv.js';
 export * from './io/exporters.js';

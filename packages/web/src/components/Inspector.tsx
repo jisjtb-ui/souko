@@ -1,5 +1,12 @@
 import { useMemo } from 'react';
-import { getObjectSpec, isForkliftObject, isRackObject } from '@ws/shared';
+import {
+  getObjectSpec,
+  isEmptyRackYardObject,
+  isForkliftObject,
+  isInboundGateObject,
+  isOutboundGateObject,
+  isRackObject,
+} from '@ws/shared';
 import type { LayoutObject } from '@ws/shared';
 import {
   computeAreaStatsList,
@@ -10,6 +17,7 @@ import {
   useEditorStore,
 } from '../store/editorStore';
 import { AreaInspector, ConnectionInspector } from './AreaInspector';
+import { EmptyRackYardInspector, InboundGateInspector, OutboundGateInspector } from './GateInspector';
 import { api } from '../api/client';
 
 /** 右サイドの情報パネル: 選択中オブジェクトの詳細と倉庫サマリー。 */
@@ -147,6 +155,59 @@ export function Inspector(): JSX.Element {
 }
 
 function ObjectInspector({ object }: { object: LayoutObject }): JSX.Element {
+  if (isInboundGateObject(object)) return <GateWrapper object={object}><InboundGateInspector gate={object} /></GateWrapper>;
+  if (isOutboundGateObject(object)) return <GateWrapper object={object}><OutboundGateInspector gate={object} /></GateWrapper>;
+  if (isEmptyRackYardObject(object)) return <GateWrapper object={object}><EmptyRackYardInspector yard={object} /></GateWrapper>;
+  return <GenericObjectInspector object={object} />;
+}
+
+/** ゲート系オブジェクトの共通操作（位置・サイズ・削除）を設定パネルに添える。 */
+function GateWrapper({ object, children }: { object: LayoutObject; children: React.ReactNode }): JSX.Element {
+  const updateObject = useEditorStore((s) => s.updateObject);
+  const commit = useEditorStore((s) => s.commitObjectChange);
+  const deleteSelected = useEditorStore((s) => s.deleteSelected);
+  const duplicateSelected = useEditorStore((s) => s.duplicateSelected);
+  const rotateSelected = useEditorStore((s) => s.rotateSelected);
+  const areas = useEditorStore((s) => s.areas);
+  const area = areas.find((a) => a.id === object.areaId);
+
+  return (
+    <>
+      {children}
+      <div className="panel-block">
+        <div className="panel-title">配置</div>
+        <div className="field-grid">
+          {(['x', 'y', 'widthM', 'depthM'] as const).map((key) => (
+            <label className="field" key={key}>
+              <span>{{ x: 'X (m)', y: 'Y (m)', widthM: '幅 (m)', depthM: '奥行 (m)' }[key]}</span>
+              <input
+                type="number"
+                step={0.5}
+                value={Number(object[key].toFixed(2))}
+                onChange={(e) => updateObject(object.id, { [key]: Number(e.target.value) })}
+                onBlur={() => commit('配置を変更しました')}
+              />
+            </label>
+          ))}
+        </div>
+        <p className="muted small">所属エリア: {area?.name ?? '（エリア外）'}</p>
+        <div className="btn-row">
+          <button type="button" onClick={() => rotateSelected(90)}>
+            90°回転
+          </button>
+          <button type="button" onClick={duplicateSelected}>
+            複製
+          </button>
+          <button type="button" className="danger" onClick={deleteSelected}>
+            削除
+          </button>
+        </div>
+      </div>
+    </>
+  );
+}
+
+function GenericObjectInspector({ object }: { object: LayoutObject }): JSX.Element {
   const spec = getObjectSpec(object.kind);
   const updateObject = useEditorStore((s) => s.updateObject);
   const commit = useEditorStore((s) => s.commitObjectChange);

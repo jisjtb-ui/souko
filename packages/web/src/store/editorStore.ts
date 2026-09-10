@@ -37,8 +37,10 @@ import type {
   LayoutSnapshot,
   Location,
   Path,
+  ProductSize,
   RackObject,
   RackSpec,
+  RackType,
   Shutter,
   Vec2,
   Warehouse,
@@ -94,6 +96,10 @@ export interface EditorState {
   connections: AreaConnection[];
   /** 接続口に設置されたシャッター */
   shutters: Shutter[];
+  /** ラック種別マスタ (小型 / 大型) */
+  rackTypes: RackType[];
+  /** 商品サイズマスタ */
+  productSizes: ProductSize[];
 
   /* --- 状態 --- */
   selectedIds: string[];
@@ -163,6 +169,14 @@ export interface EditorState {
   /** オブジェクト・ロケーションの所属エリアを再計算する */
   reassignAreas: () => void;
 
+  /* --- マスタ --- */
+  loadMasters: (warehouseId: string) => Promise<void>;
+  updateRackType: (id: string, patch: Partial<RackType>) => void;
+  updateProductSize: (id: string, patch: Partial<ProductSize>) => void;
+  addProductSize: () => void;
+  removeProductSize: (id: string) => void;
+  saveMasters: () => Promise<void>;
+
   placeObject: (kind: LayoutObjectKind, at: Vec2) => void;
   updateObject: (id: string, patch: Partial<LayoutObject>, options?: { commit?: boolean }) => void;
   commitObjectChange: (label: string) => void;
@@ -219,6 +233,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   areas: [],
   connections: [],
   shutters: [],
+  rackTypes: [],
+  productSizes: [],
 
   selectedIds: [],
   selectedAreaId: null,
@@ -596,6 +612,67 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     get().log('シャッターを撤去しました');
   },
 
+  loadMasters: async (warehouseId) => {
+    try {
+      const [types, sizes] = await Promise.all([
+        api.listRackTypes(warehouseId),
+        api.listProductSizes(warehouseId),
+      ]);
+      set({ rackTypes: types.rackTypes, productSizes: sizes.productSizes });
+    } catch {
+      // マスタ未登録でもエディタは動作するため、失敗しても致命的ではない
+      set({ rackTypes: [], productSizes: [] });
+    }
+  },
+
+  updateRackType: (id, patch) =>
+    set((s) => ({
+      rackTypes: s.rackTypes.map((t) => (t.id === id ? { ...t, ...patch } : t)),
+      dirty: true,
+    })),
+
+  updateProductSize: (id, patch) =>
+    set((s) => ({
+      productSizes: s.productSizes.map((p) => (p.id === id ? { ...p, ...patch } : p)),
+      dirty: true,
+    })),
+
+  addProductSize: () => {
+    const { warehouse, productSizes } = get();
+    if (!warehouse) return;
+    const size: ProductSize = {
+      id: createId('psz'),
+      warehouseId: warehouse.id,
+      code: `SIZE-${productSizes.length + 1}`,
+      name: '新しいサイズ',
+      rackCategory: 'small',
+      unitsPerRack: 20,
+      weightPerUnitKg: 10,
+      inboundRatioPct: 0,
+      outboundRatioPct: 0,
+      turnover: 'medium',
+    };
+    set((s) => ({ productSizes: [...s.productSizes, size], dirty: true }));
+  },
+
+  removeProductSize: (id) =>
+    set((s) => ({ productSizes: s.productSizes.filter((p) => p.id !== id), dirty: true })),
+
+  saveMasters: async () => {
+    const { warehouse, rackTypes, productSizes } = get();
+    if (!warehouse) return;
+    try {
+      const [types, sizes] = await Promise.all([
+        api.saveRackTypes(warehouse.id, rackTypes),
+        api.saveProductSizes(warehouse.id, productSizes),
+      ]);
+      set({ rackTypes: types.rackTypes, productSizes: sizes.productSizes });
+      get().log('マスタ（ラック種別・商品サイズ）を保存しました');
+    } catch (error) {
+      get().log(`マスタの保存に失敗しました: ${(error as Error).message}`, 'error');
+    }
+  },
+
   reassignAreas: () => {
     const { areas } = get();
     if (areas.length === 0) return;
@@ -858,6 +935,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         // 初回起動: すぐ操作を試せるようサンプル倉庫を用意する
         const snapshot = await api.createWarehouse({ sample: true });
         get().loadSnapshot(snapshot, [snapshot.layout]);
+        await get().loadMasters(snapshot.warehouse.id);
         get().log('サンプル倉庫を作成しました。ラックをクリックすると設定を変更できます');
       } else {
         await get().openWarehouse(warehouses[0]!.id);
@@ -878,6 +956,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       if (!first) throw new Error('レイアウトがありません');
       const snapshot = await api.getLayout(first.id);
       get().loadSnapshot(snapshot, layouts);
+      await get().loadMasters(snapshot.warehouse.id);
       get().log(`倉庫「${snapshot.warehouse.name}」を読み込みました (ロケーション ${snapshot.locations.length}件)`);
     } catch (error) {
       set({ error: (error as Error).message });
@@ -905,6 +984,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     try {
       const snapshot = await api.createWarehouse(input);
       get().loadSnapshot(snapshot, [snapshot.layout]);
+      await get().loadMasters(snapshot.warehouse.id);
       get().log(`倉庫「${snapshot.warehouse.name}」を作成しました`);
     } catch (error) {
       set({ error: (error as Error).message });
@@ -961,6 +1041,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
         shutters: result.shutters,
         warehouse: result.warehouse,
       });
+      await get().saveMasters();
       get().log(`保存しました (配置 ${result.objects.length}件 / ロケーション ${result.locations.length}件)`);
       const dup = result.warnings?.duplicateLocationCodes;
       if (dup && dup.length > 0) {
@@ -1059,6 +1140,8 @@ export type {
   AreaConnection,
   AreaKind,
   AreaStats,
+  ProductSize,
+  RackType,
   GridSizeM,
   Layout,
   LayoutObject,

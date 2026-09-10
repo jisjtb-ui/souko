@@ -1,6 +1,9 @@
 import type {
   Area,
   AreaConnection,
+  EmptyRackYardObject,
+  InboundGateObject,
+  OutboundGateObject,
   AreaKind,
   AreaShapeType,
   ConnectionType,
@@ -81,6 +84,15 @@ export function rowToLayoutObject(row: Row): LayoutObject {
   if (kind === 'forklift') {
     return { ...base, kind, forklift: props['forklift'] } as ForkliftObject;
   }
+  if (kind === 'inbound-gate') {
+    return { ...base, kind, inboundGate: props['inboundGate'] } as unknown as LayoutObject;
+  }
+  if (kind === 'outbound-gate') {
+    return { ...base, kind, outboundGate: props['outboundGate'] } as unknown as LayoutObject;
+  }
+  if (kind === 'empty-rack-yard') {
+    return { ...base, kind, emptyRackYard: props['emptyRackYard'] } as unknown as LayoutObject;
+  }
   return {
     ...base,
     kind,
@@ -93,6 +105,11 @@ export function layoutObjectToRow(obj: LayoutObject): Row {
   const props: Record<string, unknown> = {};
   if (obj.kind === 'rack' || obj.kind === 'shelf') props['rack'] = (obj as RackObject).rack;
   if (obj.kind === 'forklift') props['forklift'] = (obj as ForkliftObject).forklift;
+  if (obj.kind === 'inbound-gate') props['inboundGate'] = (obj as InboundGateObject).inboundGate;
+  if (obj.kind === 'outbound-gate') props['outboundGate'] = (obj as OutboundGateObject).outboundGate;
+  if (obj.kind === 'empty-rack-yard') {
+    props['emptyRackYard'] = (obj as EmptyRackYardObject).emptyRackYard;
+  }
   const zone = obj as ZoneObject;
 
   return {

@@ -5,6 +5,7 @@ import { Inspector } from './components/Inspector';
 import { RackDialog } from './components/RackDialog';
 import { Toolbar } from './components/Toolbar';
 import { TopBar } from './components/TopBar';
+import { MasterDialog } from './components/MasterDialog';
 import { WarehouseDialog } from './components/WarehouseDialog';
 import { useEditorStore } from './store/editorStore';
 
@@ -14,6 +15,7 @@ export default function App(): JSX.Element {
   const error = useEditorStore((s) => s.error);
   const warehouse = useEditorStore((s) => s.warehouse);
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const [mastersOpen, setMastersOpen] = useState(false);
 
   useEffect(() => {
     void bootstrap();
@@ -97,7 +99,7 @@ export default function App(): JSX.Element {
 
   return (
     <div className="app">
-      <TopBar onOpenSettings={() => setSettingsOpen(true)} />
+      <TopBar onOpenSettings={() => setSettingsOpen(true)} onOpenMasters={() => setMastersOpen(true)} />
 
       <div className="workspace">
         <Toolbar />
@@ -114,6 +116,7 @@ export default function App(): JSX.Element {
 
       <RackDialog />
       {settingsOpen && <WarehouseDialog onClose={() => setSettingsOpen(false)} />}
+      {mastersOpen && <MasterDialog onClose={() => setMastersOpen(false)} />}
     </div>
   );
 }

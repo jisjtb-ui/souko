@@ -307,3 +307,42 @@ describe('エリア構成 API', () => {
     expect(sizes.productSizes.map((s) => s.code)).toContain('195/65R15');
   });
 });
+
+describe('ゲート設定の永続化', () => {
+  it('倉入れ口・出荷ゲート・空ラック置き場の設定が保存・復元される', async () => {
+    const created = await api('/api/warehouses', {
+      method: 'POST',
+      body: JSON.stringify({ name: 'ゲート設定', sample: true }),
+    });
+    const snapshot = (await created.json()) as LayoutSnapshot;
+
+    const inbound = snapshot.objects.find((o) => o.kind === 'inbound-gate');
+    const outbound = snapshot.objects.find((o) => o.kind === 'outbound-gate');
+    const yard = snapshot.objects.find((o) => o.kind === 'empty-rack-yard');
+    expect(inbound && 'inboundGate' in inbound ? inbound.inboundGate.dailyVolume : 0).toBe(3000);
+    expect(outbound && 'outboundGate' in outbound ? outbound.outboundGate.capacityPerHour : 0).toBeGreaterThan(0);
+    expect(yard && 'emptyRackYard' in yard ? yard.emptyRackYard.stackColumns : 0).toBe(6);
+
+    // 設定を変更して保存し、読み直しても保持されること
+    const updated = snapshot.objects.map((o) =>
+      o.id === inbound?.id && 'inboundGate' in o
+        ? { ...o, inboundGate: { ...o.inboundGate, dailyVolume: 12345, capacityPerHour: 999 } }
+        : o,
+    );
+    await api(`/api/layouts/${snapshot.layout.id}`, {
+      method: 'PUT',
+      body: JSON.stringify({
+        objects: updated,
+        locations: snapshot.locations,
+        areas: snapshot.areas,
+        connections: snapshot.connections,
+        shutters: snapshot.shutters,
+      }),
+    });
+
+    const loaded = (await (await api(`/api/layouts/${snapshot.layout.id}`)).json()) as LayoutSnapshot;
+    const reloadedGate = loaded.objects.find((o) => o.id === inbound?.id);
+    expect(reloadedGate && 'inboundGate' in reloadedGate ? reloadedGate.inboundGate.dailyVolume : 0).toBe(12345);
+    expect(reloadedGate && 'inboundGate' in reloadedGate ? reloadedGate.inboundGate.sizeMix.length : 0).toBe(4);
+  });
+});

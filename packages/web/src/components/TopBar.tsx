@@ -7,7 +7,13 @@ import { useEditorStore } from '../store/editorStore';
  * 上部バー: ファイル操作 (倉庫/レイアウトの切替・保存) と
  * シミュレーションのタイムコントロール枠。
  */
-export function TopBar({ onOpenSettings }: { onOpenSettings: () => void }): JSX.Element {
+export function TopBar({
+  onOpenSettings,
+  onOpenMasters,
+}: {
+  onOpenSettings: () => void;
+  onOpenMasters: () => void;
+}): JSX.Element {
   const warehouse = useEditorStore((s) => s.warehouse);
   const layout = useEditorStore((s) => s.layout);
   const layouts = useEditorStore((s) => s.layouts);
@@ -80,6 +86,9 @@ export function TopBar({ onOpenSettings }: { onOpenSettings: () => void }): JSX.
         </button>
         <button type="button" onClick={onOpenSettings}>
           倉庫設定
+        </button>
+        <button type="button" onClick={onOpenMasters}>
+          マスタ設定
         </button>
       </div>
 
