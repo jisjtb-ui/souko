@@ -57,11 +57,25 @@ select {
 .topbar {
   display: flex;
   align-items: center;
-  gap: 18px;
+  gap: 14px;
   height: var(--topbar-h);
   padding: 0 12px;
   background: var(--chrome);
   color: var(--chrome-text);
+  flex: 0 0 auto;
+  /* 要素が増えても互いに重ならないよう、はみ出しは隠す */
+  overflow: hidden;
+}
+
+.topbar-group {
+  min-width: 0;
+}
+
+.topbar-group.sim-controls {
+  flex: 0 0 auto;
+}
+
+.brand {
   flex: 0 0 auto;
 }
 
@@ -92,6 +106,12 @@ select {
   display: flex;
   align-items: center;
   gap: 8px;
+  min-width: 0;
+}
+
+.topbar-group > button,
+.topbar-group > select {
+  flex: 0 0 auto;
 }
 
 .topbar-group.sim-controls {
@@ -123,10 +143,35 @@ select {
   gap: 5px;
   font-size: 11px;
   color: #b8c5d4;
+  white-space: nowrap;
 }
 
 .field-inline select {
-  max-width: 190px;
+  max-width: 150px;
+  min-width: 0;
+}
+
+/* 幅が足りないときは補助的な表示から順に隠す（重なりを防ぐ） */
+@media (max-width: 1680px) {
+  .sim-progress {
+    display: none;
+  }
+}
+
+@media (max-width: 1560px) {
+  .brand-name {
+    display: none;
+  }
+
+  .field-inline > span {
+    display: none;
+  }
+}
+
+@media (max-width: 1360px) {
+  .topbar .save-state {
+    display: none;
+  }
 }
 
 .topbar select,
@@ -972,4 +1017,82 @@ button.link {
   background: #fff;
   cursor: pointer;
   color: var(--muted);
+}
+
+/* ------------------------------------------------- シミュレーション表示 */
+
+.badge.running {
+  background: #2f9e5f;
+  color: #fff;
+}
+
+.sim-progress {
+  font-size: 11px;
+  color: #b8c5d4;
+  white-space: nowrap;
+}
+
+.sim-controls select {
+  height: 26px;
+}
+
+.inspector-tabs {
+  margin: 0;
+  padding: 6px 8px 0;
+  background: #f4f6f9;
+}
+
+.bottleneck {
+  padding: 7px 9px;
+  margin-bottom: 6px;
+  border-left: 3px solid var(--border);
+  border-radius: 3px;
+  background: #f7f9fb;
+}
+
+.bottleneck.critical {
+  border-left-color: var(--danger);
+  background: #fdf1ef;
+}
+
+.bottleneck.warning {
+  border-left-color: var(--warn);
+  background: #fdf8ec;
+}
+
+.bottleneck.info {
+  border-left-color: var(--accent);
+  background: #eff5fd;
+}
+
+.bottleneck-title {
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 3px;
+}
+
+.bottleneck-detail {
+  font-size: 11px;
+  color: #4c5866;
+  line-height: 1.5;
+}
+
+.comparison-verdict {
+  margin: 8px 0;
+  padding: 7px 9px;
+  border-radius: 4px;
+  background: #eef4fd;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-dark);
+}
+
+.delta.good {
+  color: #216b41;
+  font-weight: 600;
+}
+
+.delta.bad {
+  color: var(--danger);
+  font-weight: 600;
 }

@@ -16,7 +16,9 @@ import {
   selectSelectedObject,
   useEditorStore,
 } from '../store/editorStore';
+import { useState } from 'react';
 import { AreaInspector, ConnectionInspector } from './AreaInspector';
+import { SimulationPanel } from './SimulationPanel';
 import { EmptyRackYardInspector, InboundGateInspector, OutboundGateInspector } from './GateInspector';
 import { api } from '../api/client';
 
@@ -45,8 +47,23 @@ export function Inspector(): JSX.Element {
   const selectedArea = areas.find((a) => a.id === selectedAreaId);
   const selectedConnection = connections.find((c) => c.id === selectedConnectionId);
 
+  const [tab, setTab] = useState<'layout' | 'sim'>('layout');
+
   return (
     <aside className="inspector">
+      <div className="tab-row inspector-tabs">
+        <button type="button" className={tab === 'layout' ? 'tab active' : 'tab'} onClick={() => setTab('layout')}>
+          レイアウト
+        </button>
+        <button type="button" className={tab === 'sim' ? 'tab active' : 'tab'} onClick={() => setTab('sim')}>
+          シミュレーション
+        </button>
+      </div>
+
+      {tab === 'sim' ? (
+        <SimulationPanel />
+      ) : (
+        <>
       {selectedArea ? (
         <AreaInspector area={selectedArea} />
       ) : selectedConnection ? (
@@ -150,6 +167,8 @@ export function Inspector(): JSX.Element {
         </div>
         <p className="muted small">保存済みの内容が出力されます。</p>
       </div>
+        </>
+      )}
     </aside>
   );
 }

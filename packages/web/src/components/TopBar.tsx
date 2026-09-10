@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import { api } from '../api/client';
+import { SPEED_OPTIONS, useSimulationStore } from '../store/simulationStore';
 import type { WarehouseSummary } from '../api/client';
 import { useEditorStore } from '../store/editorStore';
 
@@ -7,6 +8,50 @@ import { useEditorStore } from '../store/editorStore';
  * 上部バー: ファイル操作 (倉庫/レイアウトの切替・保存) と
  * シミュレーションのタイムコントロール枠。
  */
+/** シミュレーションのタイムコントロール（要件12）。 */
+function SimulationControls(): JSX.Element {
+  const status = useSimulationStore((s) => s.status);
+  const speed = useSimulationStore((s) => s.speed);
+  const setSpeed = useSimulationStore((s) => s.setSpeed);
+  const play = useSimulationStore((s) => s.play);
+  const pause = useSimulationStore((s) => s.pause);
+  const stop = useSimulationStore((s) => s.stop);
+  const clock = useSimulationStore((s) => s.snapshot?.clock ?? '--:--:--');
+  const snapshot = useSimulationStore((s) => s.snapshot);
+
+  const statusLabel =
+    status === 'running' ? '実行中' : status === 'paused' ? '一時停止' : status === 'finished' ? '完了' : '停止中';
+
+  return (
+    <div className="topbar-group sim-controls">
+      <span className="sim-label">シミュレーション</span>
+      <button type="button" onClick={play} disabled={status === 'running'} title="再生">
+        ▶
+      </button>
+      <button type="button" onClick={pause} disabled={status !== 'running'} title="一時停止">
+        ⏸
+      </button>
+      <button type="button" onClick={stop} disabled={status === 'idle'} title="停止（最初から）">
+        ⏹
+      </button>
+      <select value={speed} onChange={(e) => setSpeed(Number(e.target.value))} title="再生速度">
+        {SPEED_OPTIONS.map((option) => (
+          <option key={option} value={option}>
+            {option}倍速
+          </option>
+        ))}
+      </select>
+      <span className="sim-clock">{clock}</span>
+      <span className={status === 'running' ? 'badge running' : 'badge'}>{statusLabel}</span>
+      {snapshot && (
+        <span className="sim-progress" title="入庫 / 出荷の処理本数">
+          {snapshot.metrics.inboundUnits.toLocaleString()} / {snapshot.metrics.outboundUnits.toLocaleString()}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export function TopBar({
   onOpenSettings,
   onOpenMasters,
@@ -107,20 +152,7 @@ export function TopBar({
         </span>
       </div>
 
-      <div className="topbar-group sim-controls" title="シミュレーション機能は Phase 4 で有効になります">
-        <span className="sim-label">シミュレーション</span>
-        <button type="button" disabled>
-          ▶
-        </button>
-        <button type="button" disabled>
-          ⏸
-        </button>
-        <button type="button" disabled>
-          ⏹
-        </button>
-        <span className="sim-clock">--:--:--</span>
-        <span className="badge">準備中</span>
-      </div>
+      <SimulationControls />
     </header>
   );
 }

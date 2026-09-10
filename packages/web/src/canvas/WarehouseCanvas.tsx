@@ -11,6 +11,8 @@ import { GridLayer } from './GridLayer';
 import { LocationLayer } from './LocationLayer';
 import { ObjectShape } from './ObjectShape';
 import { ObstacleOverlay, RouteOverlay, SelectionBox } from './OverlayLayers';
+import { SimulationLayer } from './SimulationLayer';
+import { useSimulationStore } from '../store/simulationStore';
 
 interface DragBox {
   x: number;
@@ -49,6 +51,7 @@ export function WarehouseCanvas(): JSX.Element {
   const selectedConnectionId = useEditorStore((s) => s.selectedConnectionId);
   const polygonDraft = useEditorStore((s) => s.polygonDraft);
   const connectFromAreaId = useEditorStore((s) => s.connectFromAreaId);
+  const simSnapshot = useSimulationStore((s) => s.snapshot);
 
   const [selectionBox, setSelectionBox] = useState<DragBox | null>(null);
   const [areaDraftBox, setAreaDraftBox] = useState<DragBox | null>(null);
@@ -439,6 +442,10 @@ export function WarehouseCanvas(): JSX.Element {
                 showCodes={options.showLocationCodes}
                 highlightRackId={highlightRackId}
               />
+            )}
+
+            {simSnapshot && (
+              <SimulationLayer snapshot={simSnapshot} locations={locations} scale={scale} />
             )}
 
             <RouteOverlay
