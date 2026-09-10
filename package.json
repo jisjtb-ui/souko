@@ -1,0 +1,29 @@
+{
+  "name": "warehouse-simulator",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Warehouse Simulator - 倉庫管理 + 2Dレイアウト作成 + 物流シミュレーション",
+  "type": "module",
+  "workspaces": [
+    "packages/shared",
+    "packages/server",
+    "packages/web"
+  ],
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "scripts": {
+    "build:shared": "npm -w @ws/shared run build",
+    "predev": "npm run build:shared",
+    "dev": "concurrently -n shared,server,web -c cyan,magenta,green \"npm -w @ws/shared run dev\" \"npm -w @ws/server run dev\" \"npm -w @ws/web run dev\"",
+    "prebuild": "npm run build:shared",
+    "build": "npm -w @ws/server run build && npm -w @ws/web run build",
+    "start": "npm -w @ws/server run start",
+    "test": "npm -w @ws/shared run test && npm -w @ws/server run test",
+    "typecheck": "npm -w @ws/shared run typecheck && npm -w @ws/server run typecheck && npm -w @ws/web run typecheck"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "typescript": "^5.7.3"
+  }
+}
