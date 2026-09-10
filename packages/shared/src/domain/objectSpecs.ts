@@ -6,7 +6,7 @@ export interface ObjectKindSpec {
   /** 日本語ラベル (UI 表示) */
   label: string;
   /** 分類 — ツールバーのグループ分け */
-  group: 'storage' | 'structure' | 'area' | 'equipment';
+  group: 'storage' | 'structure' | 'area' | 'logistics' | 'equipment';
   /** 既定サイズ (m) */
   defaultWidthM: number;
   defaultDepthM: number;
@@ -166,6 +166,42 @@ const SPEC_LIST: ObjectKindSpec[] = [
     traversable: false,
     dockPoint: false,
     hint: 'フォークリフトが進入できないエリア',
+  },
+  {
+    kind: 'inbound-gate',
+    label: '倉入れ口',
+    group: 'logistics',
+    defaultWidthM: 6,
+    defaultDepthM: 4,
+    fill: '#bfe3c6',
+    stroke: '#2f7d4f',
+    traversable: true,
+    dockPoint: true,
+    hint: '入庫の起点。1日の倉入れ本数・サイズ別割合・時間帯別割合を設定します',
+  },
+  {
+    kind: 'outbound-gate',
+    label: '出荷ゲート',
+    group: 'logistics',
+    defaultWidthM: 6,
+    defaultDepthM: 4,
+    fill: '#f6c8bf',
+    stroke: '#a63b28',
+    traversable: true,
+    dockPoint: true,
+    hint: '出荷の終点。1日の出荷本数・処理能力・ボリューム割合を設定します',
+  },
+  {
+    kind: 'empty-rack-yard',
+    label: '空ラック置き場',
+    group: 'logistics',
+    defaultWidthM: 8,
+    defaultDepthM: 6,
+    fill: '#dfe3e8',
+    stroke: '#59636e',
+    traversable: true,
+    dockPoint: true,
+    hint: '空になったラックを積み重ねる場所。段数の上限まで積み上げます',
   },
   {
     kind: 'forklift',

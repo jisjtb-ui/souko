@@ -722,3 +722,73 @@ button.link {
 .modal-actions button.primary:disabled {
   opacity: 0.5;
 }
+
+/* --------------------------------------------------------- エリア関連 UI */
+
+.draft-hint {
+  margin-top: 6px;
+  padding: 6px 8px;
+  border: 1px solid #cddcf1;
+  border-radius: 4px;
+  background: #eef4fd;
+  font-size: 11px;
+  color: #33465e;
+}
+
+.draft-hint .btn-row {
+  margin: 6px 0 0;
+}
+
+.area-list {
+  margin-top: 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  overflow: hidden;
+}
+
+.list-row-button {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  padding: 4px 8px;
+  border: none;
+  border-bottom: 1px solid #eef1f5;
+  background: #fff;
+  cursor: pointer;
+  text-align: left;
+  font-size: 12px;
+}
+
+.list-row-button:last-child {
+  border-bottom: none;
+}
+
+.list-row-button:hover {
+  background: #f0f4f9;
+}
+
+.list-row-button.active {
+  background: #e6f0fd;
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.shutter-state {
+  padding: 5px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  margin-bottom: 6px;
+}
+
+.shutter-state.open {
+  background: #e7f4ec;
+  color: #216b41;
+}
+
+.shutter-state.closed {
+  background: #fbe9e7;
+  color: var(--danger);
+  font-weight: 600;
+}

@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Layer, Stage, Transformer } from 'react-konva';
 import type Konva from 'konva';
-import { isRackObject, objectAABB, rectsOverlap, snap as snapValue } from '@ws/shared';
+import { findAreaAt, isRackObject, objectAABB, rectsOverlap, snap as snapValue } from '@ws/shared';
 import type { LayoutObjectKind, Vec2 } from '@ws/shared';
 import { useEditorStore } from '../store/editorStore';
 import { useContainerSize } from './useContainerSize';
+import { AreaLayer, PolygonDraftLayer } from './AreaLayer';
+import { ConnectionLayer } from './ConnectionLayer';
 import { GridLayer } from './GridLayer';
 import { LocationLayer } from './LocationLayer';
 import { ObjectShape } from './ObjectShape';
@@ -39,9 +41,20 @@ export function WarehouseCanvas(): JSX.Element {
   const options = useEditorStore((s) => s.options);
   const routePath = useEditorStore((s) => s.routePath);
   const routeStart = useEditorStore((s) => s.routeStart);
+  const routeInfo = useEditorStore((s) => s.routeInfo);
+  const areas = useEditorStore((s) => s.areas);
+  const connections = useEditorStore((s) => s.connections);
+  const shutters = useEditorStore((s) => s.shutters);
+  const selectedAreaId = useEditorStore((s) => s.selectedAreaId);
+  const selectedConnectionId = useEditorStore((s) => s.selectedConnectionId);
+  const polygonDraft = useEditorStore((s) => s.polygonDraft);
+  const connectFromAreaId = useEditorStore((s) => s.connectFromAreaId);
 
   const [selectionBox, setSelectionBox] = useState<DragBox | null>(null);
+  const [areaDraftBox, setAreaDraftBox] = useState<DragBox | null>(null);
+  const [cursorM, setCursorM] = useState<Vec2 | null>(null);
   const [spaceHeld, setSpaceHeld] = useState(false);
+  const areaDragOrigin = useRef<{ x: number; y: number } | null>(null);
   const dragOrigin = useRef<Vec2 | null>(null);
   const panOrigin = useRef<{ pointer: Vec2; offset: Vec2 } | null>(null);
 
@@ -128,6 +141,38 @@ export function WarehouseCanvas(): JSX.Element {
       store.placeObject(placingKind, meters);
       return;
     }
+    if (tool === 'area-rect') {
+      dragOrigin.current = snapPoint(meters);
+      setAreaDraftBox({ x: meters.x, y: meters.y, widthM: 0, depthM: 0 });
+      return;
+    }
+    if (tool === 'area-polygon') {
+      const snapped = snapPoint(meters);
+      const draft = store.polygonDraft ?? [];
+      // 始点付近をクリックしたら閉じて確定する
+      if (draft.length >= 3) {
+        const first = draft[0]!;
+        if (Math.hypot(first.x - snapped.x, first.y - snapped.y) < Math.max(1, 8 / scale)) {
+          store.finishPolygonArea();
+          return;
+        }
+      }
+      store.addPolygonVertex(snapped);
+      return;
+    }
+    if (tool === 'connect') {
+      const area = findAreaAt(store.areas, meters);
+      if (!area) {
+        store.log('エリアの内側をクリックしてください', 'warn');
+        return;
+      }
+      if (store.connectFromAreaId) store.completeConnect(area.id);
+      else {
+        store.beginConnect(area.id);
+        store.log(`「${area.name}」を選択しました。接続先のエリアをクリックしてください`);
+      }
+      return;
+    }
     if (tool === 'route') {
       if (store.routeStart) store.computeRoute(meters);
       else store.setRouteStart(meters);
@@ -140,9 +185,25 @@ export function WarehouseCanvas(): JSX.Element {
     }
   };
 
+  const snapPoint = (p: Vec2): Vec2 => ({ x: snapValue(p.x, gridM), y: snapValue(p.y, gridM) });
+
   const handleStageMouseMove = (): void => {
     const p = pointer();
     if (!p) return;
+    const meters = toMeters(p);
+    setCursorM(snapPoint(meters));
+
+    if (dragOrigin.current && tool === 'area-rect') {
+      const origin = dragOrigin.current;
+      const current = snapPoint(meters);
+      setAreaDraftBox({
+        x: Math.min(origin.x, current.x),
+        y: Math.min(origin.y, current.y),
+        widthM: Math.abs(current.x - origin.x),
+        depthM: Math.abs(current.y - origin.y),
+      });
+      return;
+    }
 
     if (panOrigin.current) {
       const { pointer: origin, offset } = panOrigin.current;
@@ -166,6 +227,17 @@ export function WarehouseCanvas(): JSX.Element {
 
   const handleStageMouseUp = (): void => {
     panOrigin.current = null;
+
+    if (tool === 'area-rect' && areaDraftBox) {
+      const { x, y, widthM, depthM } = areaDraftBox;
+      dragOrigin.current = null;
+      setAreaDraftBox(null);
+      if (widthM >= 0.5 && depthM >= 0.5) {
+        useEditorStore.getState().addRectArea(x, y, widthM, depthM);
+      }
+      return;
+    }
+
     if (dragOrigin.current && selectionBox) {
       if (selectionBox.widthM > 0.3 || selectionBox.depthM > 0.3) {
         const hits = objects.filter((o) => rectsOverlap(objectAABB(o), selectionBox)).map((o) => o.id);
@@ -224,6 +296,33 @@ export function WarehouseCanvas(): JSX.Element {
     store.log('サイズ・角度を変更しました');
   };
 
+  const handleAreaDragStart = (id: string): void => {
+    const store = useEditorStore.getState();
+    store._pushHistory();
+    const area = store.areas.find((a) => a.id === id);
+    areaDragOrigin.current = area ? { x: area.x, y: area.y } : null;
+  };
+
+  const handleAreaDragEnd = (id: string, delta: Vec2): void => {
+    const origin = areaDragOrigin.current;
+    areaDragOrigin.current = null;
+    if (!origin) return;
+    const store = useEditorStore.getState();
+    store.updateArea(id, {
+      x: snapValue(origin.x + delta.x, gridM),
+      y: snapValue(origin.y + delta.y, gridM),
+    });
+    const area = store.areas.find((a) => a.id === id);
+    if (area) store.log(`エリア「${area.name}」を移動しました`);
+  };
+
+  const handleVertexDrag = (areaId: string, index: number, p: Vec2): void => {
+    useEditorStore.getState().moveAreaVertex(areaId, index, {
+      x: snapValue(p.x, gridM),
+      y: snapValue(p.y, gridM),
+    });
+  };
+
   const highlightRackId = useMemo(() => {
     if (selectedIds.length !== 1) return undefined;
     const obj = objects.find((o) => o.id === selectedIds[0]);
@@ -234,7 +333,7 @@ export function WarehouseCanvas(): JSX.Element {
     ? 'copy'
     : tool === 'pan' || spaceHeld
       ? 'grab'
-      : tool === 'route'
+      : tool === 'route' || tool === 'area-rect' || tool === 'area-polygon' || tool === 'connect'
         ? 'crosshair'
         : 'default';
 
@@ -271,8 +370,45 @@ export function WarehouseCanvas(): JSX.Element {
           <Layer ref={layerRef} x={view.offsetX} y={view.offsetY} scaleX={scale} scaleY={scale}>
             <GridLayer warehouse={warehouse} scale={scale} visible={options.showGrid} />
 
+            <AreaLayer
+              areas={areas}
+              scale={scale}
+              selectedAreaId={selectedAreaId}
+              connectFromAreaId={connectFromAreaId}
+              editable={tool === 'select' && !placingKind}
+              onSelect={(id) => useEditorStore.getState().selectArea(id)}
+              onDragStart={handleAreaDragStart}
+              onDragEnd={handleAreaDragEnd}
+              onVertexDragStart={() => useEditorStore.getState()._pushHistory()}
+              onVertexDrag={handleVertexDrag}
+              onVertexDragEnd={(areaId) => {
+                const store = useEditorStore.getState();
+                store.reassignAreas();
+                const area = store.areas.find((a) => a.id === areaId);
+                if (area) store.log(`エリア「${area.name}」の形状を変更しました`);
+              }}
+              onVertexContextMenu={(areaId, index) =>
+                useEditorStore.getState().removeAreaVertex(areaId, index)
+              }
+            />
+
+            <ConnectionLayer
+              connections={connections}
+              shutters={shutters}
+              scale={scale}
+              selectedConnectionId={selectedConnectionId}
+              onSelect={(id) => useEditorStore.getState().selectConnection(id)}
+            />
+
             {options.showObstacles && (
-              <ObstacleOverlay warehouse={warehouse} objects={objects} clearanceM={0.7} />
+              <ObstacleOverlay
+                warehouse={warehouse}
+                objects={objects}
+                clearanceM={0.7}
+                areas={areas}
+                connections={connections}
+                shutters={shutters}
+              />
             )}
 
             {objects.map((object) => (
@@ -283,7 +419,7 @@ export function WarehouseCanvas(): JSX.Element {
                 selected={selectedIds.includes(object.id)}
                 showLabel={scale > 3}
                 draggable={tool === 'select' && !spaceHeld && !placingKind}
-                passThrough={Boolean(placingKind) || tool === 'route'}
+                passThrough={Boolean(placingKind) || tool !== 'select'}
                 onSelect={handleSelect}
                 onDragStart={handleDragStart}
                 onDragMove={handleDragMove}
@@ -305,8 +441,15 @@ export function WarehouseCanvas(): JSX.Element {
               />
             )}
 
-            <RouteOverlay path={routePath} start={routeStart} scale={scale} />
+            <RouteOverlay
+              path={routePath}
+              start={routeStart}
+              scale={scale}
+              blocked={routeInfo ? !routeInfo.found : false}
+            />
             <SelectionBox box={selectionBox} scale={scale} />
+            <SelectionBox box={areaDraftBox} scale={scale} />
+            <PolygonDraftLayer draft={polygonDraft} cursor={cursorM} scale={scale} />
 
             <Transformer
               ref={transformerRef}
@@ -364,7 +507,9 @@ function CanvasHud(): JSX.Element {
           {placingKind
             ? 'マップ上をクリックして配置します（Escで取消）'
             : routeInfo
-              ? `走行ルート ${routeInfo.lengthM.toFixed(1)}m — もう一度2点をクリックすると再計算します`
+              ? routeInfo.found
+                ? `走行ルート ${routeInfo.lengthM.toFixed(1)}m — もう一度2点をクリックすると再計算します`
+                : '到達できません — 表示中の経路は行き止まりまでです（接続口・シャッターを確認してください）'
               : '走行ルート確認: 出発点 → 目的地 の順にクリックしてください'}
         </div>
       )}

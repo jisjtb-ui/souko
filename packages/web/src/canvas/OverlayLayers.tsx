@@ -1,7 +1,7 @@
 import { useMemo } from 'react';
 import { Circle, Group, Line, Shape } from 'react-konva';
 import { NavGrid } from '@ws/shared';
-import type { LayoutObject, Path, Vec2, Warehouse } from '@ws/shared';
+import type { Area, AreaConnection, LayoutObject, Path, Shutter, Vec2, Warehouse } from '@ws/shared';
 
 /**
  * 走行不可エリアの可視化。
@@ -11,14 +11,27 @@ export function ObstacleOverlay({
   warehouse,
   objects,
   clearanceM,
+  areas,
+  connections,
+  shutters,
 }: {
   warehouse: Warehouse;
   objects: LayoutObject[];
   clearanceM: number;
+  areas?: Area[];
+  connections?: AreaConnection[];
+  shutters?: Shutter[];
 }): JSX.Element {
   const grid = useMemo(
-    () => NavGrid.fromLayout(warehouse, objects, { cellM: 0.5, clearanceM }),
-    [warehouse, objects, clearanceM],
+    () =>
+      NavGrid.fromLayout(warehouse, objects, {
+        cellM: 0.5,
+        clearanceM,
+        areas,
+        connections,
+        shutters,
+      }),
+    [warehouse, objects, clearanceM, areas, connections, shutters],
   );
 
   return (
@@ -42,22 +55,26 @@ export function RouteOverlay({
   path,
   start,
   scale,
+  blocked = false,
 }: {
   path: Path | null;
   start: Vec2 | null;
   scale: number;
+  /** 目的地へ到達できなかった場合（行き止まりまでを赤で表示する） */
+  blocked?: boolean;
 }): JSX.Element | null {
   if (!path && !start) return null;
   const points = path?.points.flatMap((p) => [p.x, p.y]) ?? [];
   const last = path?.points.at(-1);
+  const color = blocked ? '#c0392b' : '#1668dc';
 
   return (
     <Group listening={false}>
       {points.length >= 4 && (
-        <Line points={points} stroke="#1668dc" strokeWidth={3 / scale} lineCap="round" lineJoin="round" dash={[1, 0.5]} />
+        <Line points={points} stroke={color} strokeWidth={3 / scale} lineCap="round" lineJoin="round" dash={[1, 0.5]} />
       )}
       {start && <Circle x={start.x} y={start.y} radius={0.5} fill="#1668dc" opacity={0.8} />}
-      {path?.points[0] && <Circle x={path.points[0].x} y={path.points[0].y} radius={0.45} fill="#1668dc" />}
+      {path?.points[0] && <Circle x={path.points[0].x} y={path.points[0].y} radius={0.45} fill={color} />}
       {last && <Circle x={last.x} y={last.y} radius={0.45} fill="#c0392b" />}
     </Group>
   );

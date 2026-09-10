@@ -1,13 +1,34 @@
-import { createId } from '@ws/shared';
-import type { Layout, LayoutObject, LayoutSnapshot, Location, Warehouse } from '@ws/shared';
+import { assignAreaIds, assignLocationAreaIds, createId, ensureDefaultArea } from '@ws/shared';
+import type {
+  Area,
+  AreaConnection,
+  Layout,
+  LayoutObject,
+  LayoutSnapshot,
+  Location,
+  ProductSize,
+  RackType,
+  Shutter,
+  Warehouse,
+} from '@ws/shared';
 import { transaction, type Db } from '../db/database.js';
 import {
+  areaToRow,
+  connectionToRow,
   layoutObjectToRow,
   locationToRow,
+  productSizeToRow,
+  rackTypeToRow,
+  rowToArea,
+  rowToConnection,
   rowToLayout,
   rowToLayoutObject,
   rowToLocation,
+  rowToProductSize,
+  rowToRackType,
+  rowToShutter,
   rowToWarehouse,
+  shutterToRow,
 } from './mappers.js';
 
 type Row = Record<string, unknown>;
@@ -143,23 +164,60 @@ export function listLocations(db: Db, layoutId: string): Location[] {
   return rows.map(rowToLocation);
 }
 
-/** レイアウト1件分をまとめて取得する。 */
+export function listAreas(db: Db, layoutId: string): Area[] {
+  const rows = db
+    .prepare('SELECT * FROM areas WHERE layout_id = ? ORDER BY z ASC, rowid ASC')
+    .all(layoutId) as Row[];
+  return rows.map(rowToArea);
+}
+
+export function listConnections(db: Db, layoutId: string): AreaConnection[] {
+  const rows = db
+    .prepare('SELECT * FROM area_connections WHERE layout_id = ? ORDER BY rowid ASC')
+    .all(layoutId) as Row[];
+  return rows.map(rowToConnection);
+}
+
+export function listShutters(db: Db, layoutId: string): Shutter[] {
+  const rows = db
+    .prepare('SELECT * FROM shutters WHERE layout_id = ? ORDER BY rowid ASC')
+    .all(layoutId) as Row[];
+  return rows.map(rowToShutter);
+}
+
+/**
+ * レイアウト1件分をまとめて取得する。
+ *
+ * エリア未設定の旧データは、倉庫矩形全体を覆う「エリア1」を補ってから返す。
+ * これにより従来の長方形倉庫がそのまま動作する（次回保存時に永続化される）。
+ */
 export function getSnapshot(db: Db, layoutId: string): LayoutSnapshot | undefined {
   const layout = getLayout(db, layoutId);
   if (!layout) return undefined;
   const warehouse = getWarehouse(db, layout.warehouseId);
   if (!warehouse) return undefined;
+
+  const objects = listObjects(db, layoutId);
+  const locations = listLocations(db, layoutId);
+  const storedAreas = listAreas(db, layoutId);
+  const areas = ensureDefaultArea(warehouse, layoutId, storedAreas);
+  const migrated = storedAreas.length === 0;
+
   return {
     warehouse,
     layout,
-    objects: listObjects(db, layoutId),
-    locations: listLocations(db, layoutId),
+    areas,
+    connections: listConnections(db, layoutId),
+    shutters: listShutters(db, layoutId),
+    objects: migrated ? assignAreaIds(objects, areas) : objects,
+    locations: migrated ? assignLocationAreaIds(locations, areas, objects) : locations,
   };
 }
 
 const OBJECT_COLUMNS = [
   'id',
   'layout_id',
+  'area_id',
   'kind',
   'name',
   'x',
@@ -179,6 +237,7 @@ const OBJECT_COLUMNS = [
 const LOCATION_COLUMNS = [
   'id',
   'layout_id',
+  'area_id',
   'rack_id',
   'code',
   'column_no',
@@ -194,6 +253,42 @@ const LOCATION_COLUMNS = [
   'blocked',
 ] as const;
 
+const AREA_COLUMNS = [
+  'id',
+  'layout_id',
+  'warehouse_id',
+  'name',
+  'type',
+  'kind',
+  'polygon',
+  'x',
+  'y',
+  'rotation_deg',
+  'z',
+  'color',
+  'locked',
+  'note',
+  'metadata',
+] as const;
+
+const CONNECTION_COLUMNS = [
+  'id',
+  'layout_id',
+  'warehouse_id',
+  'name',
+  'from_area_id',
+  'to_area_id',
+  'x',
+  'y',
+  'width_m',
+  'span_m',
+  'rotation_deg',
+  'type',
+  'passable',
+] as const;
+
+const SHUTTER_COLUMNS = ['id', 'connection_id', 'layout_id', 'name', 'state'] as const;
+
 type SqlValue = string | number | null;
 
 function toSqlValues(row: Row, columns: readonly string[]): SqlValue[] {
@@ -205,19 +300,61 @@ function toSqlValues(row: Row, columns: readonly string[]): SqlValue[] {
   });
 }
 
+export interface LayoutContents {
+  objects: readonly LayoutObject[];
+  locations: readonly Location[];
+  areas?: readonly Area[];
+  connections?: readonly AreaConnection[];
+  shutters?: readonly Shutter[];
+}
+
 /**
  * レイアウトの配置内容を丸ごと置き換える (保存操作)。
  * エディタ側の状態をそのまま真実として扱うので、差分計算は行わない。
+ *
+ * エリア・接続口・シャッターも同じトランザクションで置き換える。
  */
-export function replaceLayoutContents(
-  db: Db,
-  layoutId: string,
-  objects: readonly LayoutObject[],
-  locations: readonly Location[],
-): void {
+export function replaceLayoutContents(db: Db, layoutId: string, contents: LayoutContents): void {
+  const { objects, locations } = contents;
+  const areas = contents.areas ?? [];
+  const connections = contents.connections ?? [];
+  const shutters = contents.shutters ?? [];
+
   transaction(db, () => {
     db.prepare('DELETE FROM layout_objects WHERE layout_id = ?').run(layoutId);
     db.prepare('DELETE FROM locations WHERE layout_id = ?').run(layoutId);
+    db.prepare('DELETE FROM shutters WHERE layout_id = ?').run(layoutId);
+    db.prepare('DELETE FROM area_connections WHERE layout_id = ?').run(layoutId);
+    db.prepare('DELETE FROM areas WHERE layout_id = ?').run(layoutId);
+
+    const insertArea = db.prepare(
+      `INSERT INTO areas (${AREA_COLUMNS.join(', ')})
+       VALUES (${AREA_COLUMNS.map(() => '?').join(', ')})`,
+    );
+    for (const area of areas) {
+      insertArea.run(...toSqlValues(areaToRow({ ...area, layoutId }), AREA_COLUMNS));
+    }
+
+    const insertConnection = db.prepare(
+      `INSERT INTO area_connections (${CONNECTION_COLUMNS.join(', ')})
+       VALUES (${CONNECTION_COLUMNS.map(() => '?').join(', ')})`,
+    );
+    for (const connection of connections) {
+      insertConnection.run(
+        ...toSqlValues(connectionToRow({ ...connection, layoutId }), CONNECTION_COLUMNS),
+      );
+    }
+
+    const connectionIds = new Set(connections.map((c) => c.id));
+    const insertShutter = db.prepare(
+      `INSERT INTO shutters (${SHUTTER_COLUMNS.join(', ')})
+       VALUES (${SHUTTER_COLUMNS.map(() => '?').join(', ')})`,
+    );
+    for (const shutter of shutters) {
+      // 接続口が消えたシャッターは一緒に破棄する
+      if (!connectionIds.has(shutter.connectionId)) continue;
+      insertShutter.run(...toSqlValues(shutterToRow(shutter, layoutId), SHUTTER_COLUMNS));
+    }
 
     const insertObject = db.prepare(
       `INSERT INTO layout_objects (${OBJECT_COLUMNS.join(', ')})
@@ -243,7 +380,10 @@ export function replaceLayoutContents(
   });
 }
 
-/** レイアウトを複製する (レイアウト比較用)。オブジェクトIDは振り直す。 */
+/**
+ * レイアウトを複製する (レイアウト比較用)。
+ * オブジェクト・エリア・接続口・シャッターの ID を振り直し、参照も付け替える。
+ */
 export function cloneLayout(db: Db, sourceLayoutId: string, name: string): LayoutSnapshot | undefined {
   const source = getSnapshot(db, sourceLayoutId);
   if (!source) return undefined;
@@ -257,20 +397,113 @@ export function cloneLayout(db: Db, sourceLayoutId: string, name: string): Layou
     updatedAt: nowIso(),
   };
 
+  const areaIdMap = new Map<string, string>();
+  const areas = source.areas.map((area) => {
+    const newId = createId('area');
+    areaIdMap.set(area.id, newId);
+    return { ...area, id: newId, layoutId: newLayout.id };
+  });
+
+  const connectionIdMap = new Map<string, string>();
+  const connections = source.connections.map((connection) => {
+    const newId = createId('conn');
+    connectionIdMap.set(connection.id, newId);
+    return {
+      ...connection,
+      id: newId,
+      layoutId: newLayout.id,
+      fromAreaId: areaIdMap.get(connection.fromAreaId) ?? connection.fromAreaId,
+      toAreaId: areaIdMap.get(connection.toAreaId) ?? connection.toAreaId,
+    };
+  });
+
+  const shutters = source.shutters.map((shutter) => ({
+    ...shutter,
+    id: createId('sht'),
+    connectionId: connectionIdMap.get(shutter.connectionId) ?? shutter.connectionId,
+  }));
+
   const idMap = new Map<string, string>();
   const objects = source.objects.map((obj) => {
     const newId = createId(obj.kind === 'forklift' ? 'fl' : obj.kind === 'rack' ? 'rack' : 'obj');
     idMap.set(obj.id, newId);
-    return { ...obj, id: newId, layoutId: newLayout.id };
+    return {
+      ...obj,
+      id: newId,
+      layoutId: newLayout.id,
+      ...(obj.areaId ? { areaId: areaIdMap.get(obj.areaId) ?? obj.areaId } : {}),
+    };
   });
   const locations = source.locations.map((loc) => ({
     ...loc,
     id: createId('loc'),
     layoutId: newLayout.id,
     rackId: idMap.get(loc.rackId) ?? loc.rackId,
+    ...(loc.areaId ? { areaId: areaIdMap.get(loc.areaId) ?? loc.areaId } : {}),
   }));
 
   insertLayout(db, newLayout);
-  replaceLayoutContents(db, newLayout.id, objects, locations);
-  return { warehouse: source.warehouse, layout: newLayout, objects, locations };
+  replaceLayoutContents(db, newLayout.id, { objects, locations, areas, connections, shutters });
+  return { warehouse: source.warehouse, layout: newLayout, areas, connections, shutters, objects, locations };
+}
+
+/* ------------------------------------------------------------ マスタ管理 */
+
+export function listRackTypes(db: Db, warehouseId: string): RackType[] {
+  const rows = db
+    .prepare('SELECT * FROM rack_types WHERE warehouse_id = ? ORDER BY category ASC, code ASC')
+    .all(warehouseId) as Row[];
+  return rows.map(rowToRackType);
+}
+
+const RACK_TYPE_COLUMNS = [
+  'id', 'warehouse_id', 'code', 'name', 'category', 'width_m', 'depth_m', 'height_m',
+  'levels', 'units_per_level', 'max_units', 'max_load_kg', 'max_stack_when_loaded',
+  'max_stack_when_empty', 'color',
+] as const;
+
+const PRODUCT_SIZE_COLUMNS = [
+  'id', 'warehouse_id', 'code', 'name', 'rack_category', 'units_per_rack', 'weight_per_unit_kg',
+  'inbound_ratio_pct', 'outbound_ratio_pct', 'turnover', 'preferred_area_tag', 'inbound_gate_object_id',
+] as const;
+
+/** ラック種別マスタを全置換する。 */
+export function replaceRackTypes(db: Db, warehouseId: string, types: readonly RackType[]): RackType[] {
+  transaction(db, () => {
+    db.prepare('DELETE FROM rack_types WHERE warehouse_id = ?').run(warehouseId);
+    const insert = db.prepare(
+      `INSERT INTO rack_types (${RACK_TYPE_COLUMNS.join(', ')})
+       VALUES (${RACK_TYPE_COLUMNS.map(() => '?').join(', ')})`,
+    );
+    for (const type of types) {
+      insert.run(...toSqlValues(rackTypeToRow({ ...type, warehouseId }), RACK_TYPE_COLUMNS));
+    }
+  });
+  return listRackTypes(db, warehouseId);
+}
+
+export function listProductSizes(db: Db, warehouseId: string): ProductSize[] {
+  const rows = db
+    .prepare('SELECT * FROM product_sizes WHERE warehouse_id = ? ORDER BY code ASC')
+    .all(warehouseId) as Row[];
+  return rows.map(rowToProductSize);
+}
+
+/** 商品サイズマスタを全置換する。 */
+export function replaceProductSizes(
+  db: Db,
+  warehouseId: string,
+  sizes: readonly ProductSize[],
+): ProductSize[] {
+  transaction(db, () => {
+    db.prepare('DELETE FROM product_sizes WHERE warehouse_id = ?').run(warehouseId);
+    const insert = db.prepare(
+      `INSERT INTO product_sizes (${PRODUCT_SIZE_COLUMNS.join(', ')})
+       VALUES (${PRODUCT_SIZE_COLUMNS.map(() => '?').join(', ')})`,
+    );
+    for (const size of sizes) {
+      insert.run(...toSqlValues(productSizeToRow({ ...size, warehouseId }), PRODUCT_SIZE_COLUMNS));
+    }
+  });
+  return listProductSizes(db, warehouseId);
 }

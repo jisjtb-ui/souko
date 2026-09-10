@@ -1,14 +1,29 @@
 import { Router } from 'express';
 import {
+  assignAreaIds,
+  assignLocationAreaIds,
+  createDefaultProductSizes,
+  createDefaultRackTypes,
   createLayout,
   createSampleWarehouse,
   createWarehouse,
+  ensureDefaultArea,
   findDuplicateCodes,
   isRackObject,
   locationsToCsv,
   objectsToLayoutCsv,
+  totalWarehouseArea,
 } from '@ws/shared';
-import type { LayoutObject, Location, Warehouse } from '@ws/shared';
+import type {
+  Area,
+  AreaConnection,
+  LayoutObject,
+  Location,
+  ProductSize,
+  RackType,
+  Shutter,
+  Warehouse,
+} from '@ws/shared';
 import type { Db } from '../db/database.js';
 import { badRequest, notFound, wrap } from '../http.js';
 import * as repo from '../repositories/layoutRepository.js';
@@ -35,12 +50,14 @@ export function warehouseRoutes(db: Db): Router {
       const body = req.body as Partial<Warehouse> & { sample?: boolean };
 
       if (body.sample) {
-        const snapshot = createSampleWarehouse();
-        if (body.name) snapshot.warehouse.name = body.name;
-        repo.insertWarehouse(db, snapshot.warehouse);
-        repo.insertLayout(db, snapshot.layout);
-        repo.replaceLayoutContents(db, snapshot.layout.id, snapshot.objects, snapshot.locations);
-        res.status(201).json(snapshot);
+        const sample = createSampleWarehouse();
+        if (body.name) sample.warehouse.name = body.name;
+        repo.insertWarehouse(db, sample.warehouse);
+        repo.insertLayout(db, sample.layout);
+        repo.replaceLayoutContents(db, sample.layout.id, sample);
+        repo.replaceRackTypes(db, sample.warehouse.id, sample.rackTypes);
+        repo.replaceProductSizes(db, sample.warehouse.id, sample.productSizes);
+        res.status(201).json(repo.getSnapshot(db, sample.layout.id));
         return;
       }
 
@@ -51,7 +68,12 @@ export function warehouseRoutes(db: Db): Router {
       const layout = createLayout(warehouse.id, { name: 'レイアウトA' });
       repo.insertWarehouse(db, warehouse);
       repo.insertLayout(db, layout);
-      res.status(201).json({ warehouse, layout, objects: [], locations: [] });
+      // 新規倉庫は「倉庫全体を覆うエリア1つ」から始める
+      const areas = ensureDefaultArea(warehouse, layout.id, []);
+      repo.replaceLayoutContents(db, layout.id, { objects: [], locations: [], areas });
+      repo.replaceRackTypes(db, warehouse.id, createDefaultRackTypes(warehouse.id));
+      repo.replaceProductSizes(db, warehouse.id, createDefaultProductSizes(warehouse.id));
+      res.status(201).json(repo.getSnapshot(db, layout.id));
     }),
   );
 
@@ -100,6 +122,40 @@ export function warehouseRoutes(db: Db): Router {
     }),
   );
 
+  /* ラック種別マスタ (小型 / 大型) */
+  router.get(
+    '/warehouses/:id/rack-types',
+    wrap((req, res) => {
+      res.json({ rackTypes: repo.listRackTypes(db, req.params.id!) });
+    }),
+  );
+
+  router.put(
+    '/warehouses/:id/rack-types',
+    wrap((req, res) => {
+      const body = req.body as { rackTypes?: RackType[] };
+      if (!Array.isArray(body.rackTypes)) throw badRequest('rackTypes は配列で指定してください');
+      res.json({ rackTypes: repo.replaceRackTypes(db, req.params.id!, body.rackTypes) });
+    }),
+  );
+
+  /* 商品サイズマスタ */
+  router.get(
+    '/warehouses/:id/product-sizes',
+    wrap((req, res) => {
+      res.json({ productSizes: repo.listProductSizes(db, req.params.id!) });
+    }),
+  );
+
+  router.put(
+    '/warehouses/:id/product-sizes',
+    wrap((req, res) => {
+      const body = req.body as { productSizes?: ProductSize[] };
+      if (!Array.isArray(body.productSizes)) throw badRequest('productSizes は配列で指定してください');
+      res.json({ productSizes: repo.replaceProductSizes(db, req.params.id!, body.productSizes) });
+    }),
+  );
+
   return router;
 }
 
@@ -133,7 +189,12 @@ export function layoutRoutes(db: Db): Router {
       if (!warehouse) throw notFound('倉庫');
       const layout = createLayout(warehouse.id, { name: body.name ?? 'レイアウトB' });
       repo.insertLayout(db, layout);
-      res.status(201).json({ warehouse, layout, objects: [], locations: [] });
+      repo.replaceLayoutContents(db, layout.id, {
+        objects: [],
+        locations: [],
+        areas: ensureDefaultArea(warehouse, layout.id, []),
+      });
+      res.status(201).json(repo.getSnapshot(db, layout.id));
     }),
   );
 
@@ -169,6 +230,9 @@ export function layoutRoutes(db: Db): Router {
         warehouse?: Partial<Warehouse>;
         objects?: LayoutObject[];
         locations?: Location[];
+        areas?: Area[];
+        connections?: AreaConnection[];
+        shutters?: Shutter[];
         name?: string;
       };
       if (!Array.isArray(body.objects) || !Array.isArray(body.locations)) {
@@ -177,11 +241,28 @@ export function layoutRoutes(db: Db): Router {
 
       if (body.warehouse) repo.updateWarehouse(db, layout.warehouseId, body.warehouse);
       if (body.name) repo.updateLayoutMeta(db, layoutId, { name: body.name });
-      repo.replaceLayoutContents(db, layoutId, body.objects, body.locations);
+
+      // エリアが未指定・空の場合は倉庫全体を覆う既定エリアを補う（旧クライアント互換）
+      const warehouse = repo.getWarehouse(db, layout.warehouseId)!;
+      const areas = ensureDefaultArea(warehouse, layoutId, body.areas ?? []);
+      const objects = assignAreaIds(body.objects, areas);
+      const locations = assignLocationAreaIds(body.locations, areas, objects);
+
+      repo.replaceLayoutContents(db, layoutId, {
+        objects,
+        locations,
+        areas,
+        connections: body.connections ?? [],
+        shutters: body.shutters ?? [],
+      });
 
       const snapshot = repo.getSnapshot(db, layoutId)!;
       const duplicates = [...findDuplicateCodes(snapshot.locations).keys()];
-      res.json({ ...snapshot, warnings: duplicates.length > 0 ? { duplicateLocationCodes: duplicates } : undefined });
+      res.json({
+        ...snapshot,
+        totalAreaM2: totalWarehouseArea(snapshot.areas),
+        warnings: duplicates.length > 0 ? { duplicateLocationCodes: duplicates } : undefined,
+      });
     }),
   );
 

@@ -1,7 +1,15 @@
 import { useMemo } from 'react';
 import { getObjectSpec, isForkliftObject, isRackObject } from '@ws/shared';
 import type { LayoutObject } from '@ws/shared';
-import { computeStats, findOutOfBounds, selectSelectedObject, useEditorStore } from '../store/editorStore';
+import {
+  computeAreaStatsList,
+  computeStats,
+  computeTotalArea,
+  findOutOfBounds,
+  selectSelectedObject,
+  useEditorStore,
+} from '../store/editorStore';
+import { AreaInspector, ConnectionInspector } from './AreaInspector';
 import { api } from '../api/client';
 
 /** 右サイドの情報パネル: 選択中オブジェクトの詳細と倉庫サマリー。 */
@@ -13,12 +21,29 @@ export function Inspector(): JSX.Element {
   const warehouse = useEditorStore((s) => s.warehouse);
   const layout = useEditorStore((s) => s.layout);
 
+  const areas = useEditorStore((s) => s.areas);
+  const connections = useEditorStore((s) => s.connections);
+  const selectedAreaId = useEditorStore((s) => s.selectedAreaId);
+  const selectedConnectionId = useEditorStore((s) => s.selectedConnectionId);
+  const selectArea = useEditorStore((s) => s.selectArea);
+
   const stats = useMemo(() => computeStats(objects, locations, warehouse), [objects, locations, warehouse]);
   const outOfBounds = useMemo(() => findOutOfBounds(objects, warehouse), [objects, warehouse]);
+  const areaStats = useMemo(
+    () => computeAreaStatsList(areas, objects, locations),
+    [areas, objects, locations],
+  );
+  const totalAreaM2 = useMemo(() => computeTotalArea(areas), [areas]);
+  const selectedArea = areas.find((a) => a.id === selectedAreaId);
+  const selectedConnection = connections.find((c) => c.id === selectedConnectionId);
 
   return (
     <aside className="inspector">
-      {selected ? (
+      {selectedArea ? (
+        <AreaInspector area={selectedArea} />
+      ) : selectedConnection ? (
+        <ConnectionInspector connection={selectedConnection} />
+      ) : selected ? (
         <ObjectInspector object={selected} />
       ) : (
         <div className="panel-block">
@@ -30,6 +55,35 @@ export function Inspector(): JSX.Element {
           </p>
         </div>
       )}
+
+      <div className="panel-block">
+        <div className="panel-title">倉庫全体（エリア {areas.length}）</div>
+        <dl className="stat-grid">
+          <div>
+            <dt>倉庫総面積</dt>
+            <dd>{totalAreaM2.toLocaleString(undefined, { maximumFractionDigits: 0 })} ㎡</dd>
+          </div>
+          <div>
+            <dt>接続口</dt>
+            <dd>{connections.length} 箇所</dd>
+          </div>
+        </dl>
+        <div className="area-list">
+          {areaStats.map((stat) => (
+            <button
+              key={stat.areaId}
+              type="button"
+              className={stat.areaId === selectedAreaId ? 'list-row-button active' : 'list-row-button'}
+              onClick={() => selectArea(stat.areaId)}
+            >
+              <span>{stat.name}</span>
+              <span className="muted small">{stat.sizeM2.toFixed(0)} ㎡</span>
+              <span className="muted small">ロケ {stat.locationCount}</span>
+            </button>
+          ))}
+        </div>
+        <p className="muted small">重なっているエリアは総面積で二重計上しません。</p>
+      </div>
 
       <div className="panel-block">
         <div className="panel-title">倉庫サマリー</div>

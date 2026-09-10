@@ -1,18 +1,35 @@
 import { create } from 'zustand';
 import {
   NavGrid,
+  areaSizeM2,
+  areasBounds,
+  assignAreaIds,
+  assignLocationAreaIds,
+  computeAreaStats,
+  createArea,
+  createConnection,
   createId,
+  createShutter,
   createLayoutObject,
   createNamingRule,
   findDuplicateCodes,
   findPath,
   generateLocationsForRack,
   getObjectSpec,
+  ensureDefaultArea,
+  findAreaAt,
   isRackObject,
   objectAABB,
+  polygonArea,
   snap as snapValue,
+  suggestConnection,
+  totalWarehouseArea,
 } from '@ws/shared';
 import type {
+  Area,
+  AreaConnection,
+  AreaKind,
+  AreaStats,
   GridSizeM,
   Layout,
   LayoutObject,
@@ -22,12 +39,13 @@ import type {
   Path,
   RackObject,
   RackSpec,
+  Shutter,
   Vec2,
   Warehouse,
 } from '@ws/shared';
 import { api } from '../api/client';
 
-export type Tool = 'select' | 'pan' | 'route';
+export type Tool = 'select' | 'pan' | 'route' | 'area-rect' | 'area-polygon' | 'connect';
 
 export interface LogEntry {
   id: string;
@@ -55,6 +73,9 @@ export interface ViewOptions {
 interface DocState {
   objects: LayoutObject[];
   locations: Location[];
+  areas: Area[];
+  connections: AreaConnection[];
+  shutters: Shutter[];
 }
 
 const MAX_HISTORY = 50;
@@ -67,9 +88,22 @@ export interface EditorState {
   layouts: Layout[];
   objects: LayoutObject[];
   locations: Location[];
+  /** 倉庫を構成する区画 */
+  areas: Area[];
+  /** エリア間の接続口 */
+  connections: AreaConnection[];
+  /** 接続口に設置されたシャッター */
+  shutters: Shutter[];
 
   /* --- 状態 --- */
   selectedIds: string[];
+  /** 選択中のエリア / 接続口 (オブジェクト選択とは排他) */
+  selectedAreaId: string | null;
+  selectedConnectionId: string | null;
+  /** 多角形エリア作成中の頂点 */
+  polygonDraft: Vec2[] | null;
+  /** 接続作成時に最初に選んだエリア */
+  connectFromAreaId: string | null;
   tool: Tool;
   /** ツールバーで選択中の配置待ちオブジェクト */
   placingKind: LayoutObjectKind | null;
@@ -102,6 +136,32 @@ export interface EditorState {
   select: (ids: string[]) => void;
   toggleSelect: (id: string) => void;
   clearSelection: () => void;
+
+  /* --- エリア --- */
+  selectArea: (id: string | null) => void;
+  selectConnection: (id: string | null) => void;
+  addRectArea: (x: number, y: number, widthM: number, depthM: number) => void;
+  startPolygonArea: () => void;
+  addPolygonVertex: (p: Vec2) => void;
+  finishPolygonArea: () => void;
+  cancelPolygonArea: () => void;
+  updateArea: (id: string, patch: Partial<Area>, options?: { commit?: boolean }) => void;
+  moveAreaVertex: (areaId: string, index: number, p: Vec2) => void;
+  addAreaVertex: (areaId: string, index: number) => void;
+  removeAreaVertex: (areaId: string, index: number) => void;
+  /** エリアを重心を中心に拡大・縮小する */
+  scaleArea: (areaId: string, factor: number) => void;
+  deleteArea: (id: string) => void;
+  duplicateArea: (id: string) => void;
+  beginConnect: (areaId: string) => void;
+  completeConnect: (areaId: string) => void;
+  updateConnection: (id: string, patch: Partial<AreaConnection>, options?: { commit?: boolean }) => void;
+  deleteConnection: (id: string) => void;
+  addShutter: (connectionId: string) => void;
+  toggleShutter: (connectionId: string) => void;
+  removeShutter: (connectionId: string) => void;
+  /** オブジェクト・ロケーションの所属エリアを再計算する */
+  reassignAreas: () => void;
 
   placeObject: (kind: LayoutObjectKind, at: Vec2) => void;
   updateObject: (id: string, patch: Partial<LayoutObject>, options?: { commit?: boolean }) => void;
@@ -141,7 +201,13 @@ export interface EditorState {
 const nowClock = (): string => new Date().toLocaleTimeString('ja-JP', { hour12: false });
 
 function docOf(state: EditorState): DocState {
-  return { objects: state.objects, locations: state.locations };
+  return {
+    objects: state.objects,
+    locations: state.locations,
+    areas: state.areas,
+    connections: state.connections,
+    shutters: state.shutters,
+  };
 }
 
 export const useEditorStore = create<EditorState>((set, get) => ({
@@ -150,8 +216,15 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   layouts: [],
   objects: [],
   locations: [],
+  areas: [],
+  connections: [],
+  shutters: [],
 
   selectedIds: [],
+  selectedAreaId: null,
+  selectedConnectionId: null,
+  polygonDraft: null,
+  connectFromAreaId: null,
   tool: 'select',
   placingKind: null,
   view: { zoom: 1, offsetX: 40, offsetY: 40 },
@@ -182,7 +255,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       logs: [{ id: createId('log'), time: nowClock(), level, message }, ...s.logs].slice(0, MAX_LOGS),
     })),
 
-  setTool: (tool) => set({ tool, placingKind: null, routeStart: null }),
+  setTool: (tool) =>
+    set({ tool, placingKind: null, routeStart: null, polygonDraft: null, connectFromAreaId: null }),
   setPlacingKind: (placingKind) => set({ placingKind, tool: 'select' }),
   setView: (view) => set((s) => ({ view: { ...s.view, ...view } })),
 
@@ -205,28 +279,34 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     if (!warehouse || stageWidth <= 0 || stageHeight <= 0) return;
     const padding = 48;
     const ppm = warehouse.pixelsPerMeter;
+    // 全エリアを含む範囲に合わせる（全体表示）
+    const { areas } = get();
+    const bounds = areas.length > 0 ? areasBounds(areas) : { x: 0, y: 0, widthM: 0, depthM: 0 };
+    const extentX = Math.max(warehouse.widthM, bounds.x + bounds.widthM);
+    const extentY = Math.max(warehouse.depthM, bounds.y + bounds.depthM);
     const zoom = Math.min(
-      (stageWidth - padding * 2) / (warehouse.widthM * ppm),
-      (stageHeight - padding * 2) / (warehouse.depthM * ppm),
+      (stageWidth - padding * 2) / (extentX * ppm),
+      (stageHeight - padding * 2) / (extentY * ppm),
     );
     const safeZoom = Math.max(0.05, zoom);
     set({
       view: {
         zoom: safeZoom,
-        offsetX: (stageWidth - warehouse.widthM * ppm * safeZoom) / 2,
-        offsetY: (stageHeight - warehouse.depthM * ppm * safeZoom) / 2,
+        offsetX: (stageWidth - extentX * ppm * safeZoom) / 2,
+        offsetY: (stageHeight - extentY * ppm * safeZoom) / 2,
       },
     });
   },
 
   setOption: (key, value) => set((s) => ({ options: { ...s.options, [key]: value } })),
 
-  select: (ids) => set({ selectedIds: ids }),
+  select: (ids) => set({ selectedIds: ids, selectedAreaId: null, selectedConnectionId: null }),
   toggleSelect: (id) =>
     set((s) => ({
       selectedIds: s.selectedIds.includes(id) ? s.selectedIds.filter((x) => x !== id) : [...s.selectedIds, id],
     })),
-  clearSelection: () => set({ selectedIds: [] }),
+  clearSelection: () =>
+    set({ selectedIds: [], selectedAreaId: null, selectedConnectionId: null }),
 
   _pushHistory: () =>
     set((s) => ({
@@ -234,6 +314,296 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       _future: [],
       dirty: true,
     })),
+
+
+  /* ------------------------------------------------------------- エリア */
+
+  selectArea: (id) => set({ selectedAreaId: id, selectedIds: [], selectedConnectionId: null }),
+  selectConnection: (id) => set({ selectedConnectionId: id, selectedIds: [], selectedAreaId: null }),
+
+  addRectArea: (x, y, widthM, depthM) => {
+    const { warehouse, layout, areas } = get();
+    if (!warehouse || !layout) return;
+    if (widthM < 0.5 || depthM < 0.5) return;
+    get()._pushHistory();
+    const area = createArea({
+      warehouseId: warehouse.id,
+      layoutId: layout.id,
+      name: `エリア${areas.length + 1}`,
+      x,
+      y,
+      widthM,
+      depthM,
+      z: areas.length,
+    });
+    set((s) => ({ areas: [...s.areas, area], selectedAreaId: area.id, tool: 'select' }));
+    get().reassignAreas();
+    get().log(`矩形エリア「${area.name}」を追加しました（${areaSizeM2(area).toFixed(1)} ㎡）`);
+  },
+
+  startPolygonArea: () => set({ tool: 'area-polygon', polygonDraft: [], placingKind: null }),
+
+  addPolygonVertex: (p) =>
+    set((s) => ({ polygonDraft: [...(s.polygonDraft ?? []), { x: p.x, y: p.y }] })),
+
+  finishPolygonArea: () => {
+    const { polygonDraft, warehouse, layout, areas } = get();
+    if (!polygonDraft || polygonDraft.length < 3 || !warehouse || !layout) {
+      set({ polygonDraft: null, tool: 'select' });
+      return;
+    }
+    // 最初の頂点を原点にした相対座標で保持する
+    const origin = polygonDraft[0]!;
+    const polygon = polygonDraft.map((v) => ({ x: v.x - origin.x, y: v.y - origin.y }));
+    if (polygonArea(polygon) < 0.5) {
+      get().log('面積が小さすぎます。頂点を置き直してください', 'warn');
+      set({ polygonDraft: null, tool: 'select' });
+      return;
+    }
+    get()._pushHistory();
+    const area = createArea({
+      warehouseId: warehouse.id,
+      layoutId: layout.id,
+      name: `エリア${areas.length + 1}`,
+      x: origin.x,
+      y: origin.y,
+      polygon,
+      z: areas.length,
+    });
+    set((s) => ({
+      areas: [...s.areas, area],
+      polygonDraft: null,
+      tool: 'select',
+      selectedAreaId: area.id,
+    }));
+    get().reassignAreas();
+    get().log(
+      `多角形エリア「${area.name}」を追加しました（${polygon.length}頂点 / ${areaSizeM2(area).toFixed(1)} ㎡）`,
+    );
+  },
+
+  cancelPolygonArea: () => set({ polygonDraft: null, tool: 'select' }),
+
+  updateArea: (id, patch, opts) => {
+    if (opts?.commit) get()._pushHistory();
+    set((s) => ({ areas: s.areas.map((a) => (a.id === id ? { ...a, ...patch } : a)), dirty: true }));
+    get().reassignAreas();
+  },
+
+  moveAreaVertex: (areaId, index, p) => {
+    set((s) => ({
+      areas: s.areas.map((a) => {
+        if (a.id !== areaId) return a;
+        const polygon = a.polygon.map((v, i) =>
+          i === index ? { x: p.x - a.x, y: p.y - a.y } : v,
+        );
+        return { ...a, polygon, type: 'polygon' as const };
+      }),
+      dirty: true,
+    }));
+  },
+
+  addAreaVertex: (areaId, index) => {
+    get()._pushHistory();
+    set((s) => ({
+      areas: s.areas.map((a) => {
+        if (a.id !== areaId) return a;
+        const next = a.polygon[(index + 1) % a.polygon.length]!;
+        const current = a.polygon[index]!;
+        const mid = { x: (current.x + next.x) / 2, y: (current.y + next.y) / 2 };
+        const polygon = [...a.polygon];
+        polygon.splice(index + 1, 0, mid);
+        return { ...a, polygon, type: 'polygon' as const };
+      }),
+    }));
+    get().log('頂点を追加しました');
+  },
+
+  removeAreaVertex: (areaId, index) => {
+    const area = get().areas.find((a) => a.id === areaId);
+    if (!area || area.polygon.length <= 3) {
+      get().log('頂点は3つ以上必要です', 'warn');
+      return;
+    }
+    get()._pushHistory();
+    set((s) => ({
+      areas: s.areas.map((a) =>
+        a.id === areaId
+          ? { ...a, polygon: a.polygon.filter((_, i) => i !== index), type: 'polygon' as const }
+          : a,
+      ),
+    }));
+    get().log('頂点を削除しました');
+  },
+
+  scaleArea: (areaId, factor) => {
+    if (!Number.isFinite(factor) || factor <= 0) return;
+    const area = get().areas.find((a) => a.id === areaId);
+    if (!area) return;
+    get()._pushHistory();
+    // ローカル多角形の重心を基準に拡大縮小する（位置は動かさない）
+    const cx = area.polygon.reduce((sum, v) => sum + v.x, 0) / area.polygon.length;
+    const cy = area.polygon.reduce((sum, v) => sum + v.y, 0) / area.polygon.length;
+    set((s) => ({
+      areas: s.areas.map((a) =>
+        a.id === areaId
+          ? {
+              ...a,
+              polygon: a.polygon.map((v) => ({
+                x: cx + (v.x - cx) * factor,
+                y: cy + (v.y - cy) * factor,
+              })),
+            }
+          : a,
+      ),
+    }));
+    get().reassignAreas();
+    get().log(`エリア「${area.name}」を ${Math.round(factor * 100)}% に変更しました`);
+  },
+
+  deleteArea: (id) => {
+    const area = get().areas.find((a) => a.id === id);
+    if (!area) return;
+    get()._pushHistory();
+    const removedConnections = get().connections.filter(
+      (c) => c.fromAreaId === id || c.toAreaId === id,
+    );
+    const removedIds = new Set(removedConnections.map((c) => c.id));
+    set((s) => ({
+      areas: s.areas.filter((a) => a.id !== id),
+      connections: s.connections.filter((c) => !removedIds.has(c.id)),
+      shutters: s.shutters.filter((sh) => !removedIds.has(sh.connectionId)),
+      selectedAreaId: null,
+    }));
+    get().reassignAreas();
+    get().log(
+      `エリア「${area.name}」を削除しました${removedConnections.length > 0 ? `（接続口 ${removedConnections.length} 件も削除）` : ''}`,
+    );
+  },
+
+  duplicateArea: (id) => {
+    const { areas, warehouse } = get();
+    const area = areas.find((a) => a.id === id);
+    if (!area || !warehouse) return;
+    get()._pushHistory();
+    const copy: Area = {
+      ...area,
+      id: createId('area'),
+      name: `${area.name} コピー`,
+      x: area.x + warehouse.gridSizeM * 4,
+      y: area.y + warehouse.gridSizeM * 4,
+      z: areas.length,
+      polygon: area.polygon.map((v) => ({ ...v })),
+    };
+    set((s) => ({ areas: [...s.areas, copy], selectedAreaId: copy.id }));
+    get().log(`エリア「${area.name}」を複製しました`);
+  },
+
+  beginConnect: (areaId) => set({ connectFromAreaId: areaId }),
+
+  completeConnect: (areaId) => {
+    const { connectFromAreaId, areas, warehouse, layout } = get();
+    if (!connectFromAreaId || !warehouse || !layout) return;
+    if (connectFromAreaId === areaId) {
+      get().log('同じエリア同士は接続できません', 'warn');
+      return;
+    }
+    const from = areas.find((a) => a.id === connectFromAreaId);
+    const to = areas.find((a) => a.id === areaId);
+    if (!from || !to) return;
+
+    get()._pushHistory();
+    const suggestion = suggestConnection(from, to);
+    const connection = createConnection({
+      warehouseId: warehouse.id,
+      layoutId: layout.id,
+      name: `${from.name} ⇔ ${to.name}`,
+      fromAreaId: from.id,
+      toAreaId: to.id,
+      x: suggestion.x,
+      y: suggestion.y,
+      widthM: suggestion.widthM,
+      spanM: suggestion.spanM,
+      rotationDeg: suggestion.rotationDeg,
+    });
+    set((s) => ({
+      connections: [...s.connections, connection],
+      connectFromAreaId: null,
+      tool: 'select',
+      selectedConnectionId: connection.id,
+      selectedAreaId: null,
+      selectedIds: [],
+    }));
+    get().log(
+      `接続口「${connection.name}」を作成しました（幅 ${connection.widthM}m / 離隔 ${suggestion.distance.toFixed(1)}m）`,
+    );
+  },
+
+  updateConnection: (id, patch, opts) => {
+    if (opts?.commit) get()._pushHistory();
+    set((s) => ({
+      connections: s.connections.map((c) => (c.id === id ? { ...c, ...patch } : c)),
+      dirty: true,
+    }));
+  },
+
+  deleteConnection: (id) => {
+    const connection = get().connections.find((c) => c.id === id);
+    if (!connection) return;
+    get()._pushHistory();
+    set((s) => ({
+      connections: s.connections.filter((c) => c.id !== id),
+      shutters: s.shutters.filter((sh) => sh.connectionId !== id),
+      selectedConnectionId: null,
+    }));
+    get().log(`接続口「${connection.name}」を削除しました`);
+  },
+
+  addShutter: (connectionId) => {
+    if (get().shutters.some((s) => s.connectionId === connectionId)) return;
+    get()._pushHistory();
+    const shutter = createShutter(connectionId);
+    set((s) => ({
+      shutters: [...s.shutters, shutter],
+      connections: s.connections.map((c) =>
+        c.id === connectionId ? { ...c, type: 'shutter' as const } : c,
+      ),
+    }));
+    get().log('シャッターを設置しました（初期状態: 開）');
+  },
+
+  toggleShutter: (connectionId) => {
+    get()._pushHistory();
+    let nextState: 'open' | 'closed' = 'open';
+    set((s) => ({
+      shutters: s.shutters.map((sh) => {
+        if (sh.connectionId !== connectionId) return sh;
+        nextState = sh.state === 'open' ? 'closed' : 'open';
+        return { ...sh, state: nextState };
+      }),
+    }));
+    const connection = get().connections.find((c) => c.id === connectionId);
+    get().log(
+      `${connection?.name ?? '接続口'} のシャッターを${nextState === 'open' ? '開' : '閉'}にしました`,
+      nextState === 'open' ? 'info' : 'warn',
+    );
+    get().clearRoute();
+  },
+
+  removeShutter: (connectionId) => {
+    get()._pushHistory();
+    set((s) => ({ shutters: s.shutters.filter((sh) => sh.connectionId !== connectionId) }));
+    get().log('シャッターを撤去しました');
+  },
+
+  reassignAreas: () => {
+    const { areas } = get();
+    if (areas.length === 0) return;
+    set((s) => {
+      const objects = assignAreaIds(s.objects, areas);
+      return { objects, locations: assignLocationAreaIds(s.locations, areas, objects) };
+    });
+  },
 
   placeObject: (kind, at) => {
     const { layout, warehouse, options } = get();
@@ -399,15 +769,21 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   setRouteStart: (p) => set({ routeStart: p, routePath: null, routeInfo: null }),
 
   computeRoute: (to) => {
-    const { warehouse, objects, routeStart } = get();
+    const { warehouse, objects, routeStart, areas, connections, shutters } = get();
     if (!warehouse || !routeStart) return;
-    const grid = NavGrid.fromLayout(warehouse, objects, { cellM: 0.5, clearanceM: 0.7 });
+    const grid = NavGrid.fromLayout(warehouse, objects, {
+      cellM: 0.5,
+      clearanceM: 0.7,
+      areas,
+      connections,
+      shutters,
+    });
     const result = findPath(grid, routeStart, to);
     set({ routePath: result, routeInfo: { found: result.found, lengthM: result.lengthM }, routeStart: null });
     get().log(
       result.found
         ? `走行ルート: ${result.lengthM.toFixed(1)}m (通路を通って到達可能)`
-        : '走行ルートが見つかりません。通路が塞がれていないか確認してください',
+        : '走行ルートが見つかりません。通路の確保・エリアの接続口・シャッターの開閉を確認してください',
       result.found ? 'info' : 'warn',
     );
   },
@@ -421,6 +797,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set((s) => ({
       objects: previous.objects,
       locations: previous.locations,
+      areas: previous.areas,
+      connections: previous.connections,
+      shutters: previous.shutters,
       _past: s._past.slice(0, -1),
       _future: [docOf(s), ...s._future].slice(0, MAX_HISTORY),
       selectedIds: [],
@@ -436,6 +815,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set((s) => ({
       objects: next.objects,
       locations: next.locations,
+      areas: next.areas,
+      connections: next.connections,
+      shutters: next.shutters,
       _past: [...s._past, docOf(s)].slice(-MAX_HISTORY),
       _future: s._future.slice(1),
       selectedIds: [],
@@ -448,10 +830,18 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     set({
       warehouse: snapshot.warehouse,
       layout: snapshot.layout,
+      // エリア未設定の旧データは倉庫全体を覆うエリア1つへ移行する
+      areas: ensureDefaultArea(snapshot.warehouse, snapshot.layout.id, snapshot.areas ?? []),
+      connections: snapshot.connections ?? [],
+      shutters: snapshot.shutters ?? [],
       objects: snapshot.objects,
       locations: snapshot.locations,
       layouts: layouts ?? get().layouts,
       selectedIds: [],
+      selectedAreaId: null,
+      selectedConnectionId: null,
+      polygonDraft: null,
+      connectFromAreaId: null,
       _past: [],
       _future: [],
       dirty: false,
@@ -549,16 +939,26 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   },
 
   save: async () => {
-    const { layout, warehouse, objects, locations } = get();
+    const { layout, warehouse, objects, locations, areas, connections, shutters } = get();
     if (!layout || !warehouse) return;
     set({ saving: true, error: null });
     try {
-      const result = await api.saveLayout(layout.id, { objects, locations, warehouse });
+      const result = await api.saveLayout(layout.id, {
+        objects,
+        locations,
+        areas,
+        connections,
+        shutters,
+        warehouse,
+      });
       set({
         dirty: false,
         lastSavedAt: nowClock(),
         objects: result.objects,
         locations: result.locations,
+        areas: result.areas,
+        connections: result.connections,
+        shutters: result.shutters,
         warehouse: result.warehouse,
       });
       get().log(`保存しました (配置 ${result.objects.length}件 / ロケーション ${result.locations.length}件)`);
@@ -613,6 +1013,25 @@ export function computeStats(
   };
 }
 
+/** エリアごとの集計。 */
+export function computeAreaStatsList(
+  areas: readonly Area[],
+  objects: readonly LayoutObject[],
+  locations: readonly Location[],
+): AreaStats[] {
+  return areas.map((area) => computeAreaStats(area, objects, locations));
+}
+
+/** 倉庫総面積（重なりを二重計上しない）。 */
+export function computeTotalArea(areas: readonly Area[]): number {
+  return totalWarehouseArea(areas);
+}
+
+/** 座標からエリアを特定する（キャンバスのクリック判定用）。 */
+export function areaAtPoint(areas: readonly Area[], p: Vec2): Area | undefined {
+  return findAreaAt(areas, p);
+}
+
 export function selectSelectedObject(state: EditorState): LayoutObject | undefined {
   if (state.selectedIds.length !== 1) return undefined;
   return state.objects.find((o) => o.id === state.selectedIds[0]);
@@ -635,4 +1054,16 @@ export function findOutOfBounds(
   });
 }
 
-export type { GridSizeM, Layout, LayoutObject, Location, RackObject, Warehouse };
+export type {
+  Area,
+  AreaConnection,
+  AreaKind,
+  AreaStats,
+  GridSizeM,
+  Layout,
+  LayoutObject,
+  Location,
+  RackObject,
+  Shutter,
+  Warehouse,
+};

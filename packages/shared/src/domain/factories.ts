@@ -1,4 +1,14 @@
 import { createId } from './ids.js';
+import {
+  createEmptyRackYardConfig,
+  createInboundGateConfig,
+  createOutboundGateConfig,
+} from './logisticsFactories.js';
+import type {
+  EmptyRackYardConfig,
+  InboundGateConfig,
+  OutboundGateConfig,
+} from './logistics.js';
 import { DEFAULT_NAMING_RULE } from './locations.js';
 import { getObjectSpec } from './objectSpecs.js';
 import type {
@@ -98,13 +108,35 @@ export interface CreateObjectInput {
   z?: number;
   rack?: RackSpecInput;
   forklift?: Partial<ForkliftSpec>;
+  inboundGate?: Partial<InboundGateConfig>;
+  outboundGate?: Partial<OutboundGateConfig>;
+  emptyRackYard?: Partial<EmptyRackYardConfig>;
+}
+
+/** 種別ごとの id プレフィックス（ログを読みやすくするため）。 */
+export function objectIdPrefix(kind: LayoutObjectKind): string {
+  switch (kind) {
+    case 'forklift':
+      return 'fl';
+    case 'rack':
+    case 'shelf':
+      return 'rack';
+    case 'inbound-gate':
+      return 'ingate';
+    case 'outbound-gate':
+      return 'outgate';
+    case 'empty-rack-yard':
+      return 'yard';
+    default:
+      return 'obj';
+  }
 }
 
 /** 種別ごとの既定値を適用して配置オブジェクトを生成する。 */
 export function createLayoutObject(input: CreateObjectInput): LayoutObject {
   const spec = getObjectSpec(input.kind);
   const base = {
-    id: createId(input.kind === 'forklift' ? 'fl' : input.kind === 'rack' ? 'rack' : 'obj'),
+    id: createId(objectIdPrefix(input.kind)),
     layoutId: input.layoutId,
     name: input.name ?? spec.label,
     x: input.x,
@@ -129,6 +161,30 @@ export function createLayoutObject(input: CreateObjectInput): LayoutObject {
       ...base,
       kind: 'forklift',
       forklift: createForkliftSpec(input.forklift ?? {}),
+    };
+  }
+
+  if (input.kind === 'inbound-gate') {
+    return {
+      ...base,
+      kind: 'inbound-gate',
+      inboundGate: createInboundGateConfig({ code: base.name, ...(input.inboundGate ?? {}) }),
+    };
+  }
+
+  if (input.kind === 'outbound-gate') {
+    return {
+      ...base,
+      kind: 'outbound-gate',
+      outboundGate: createOutboundGateConfig({ code: base.name, ...(input.outboundGate ?? {}) }),
+    };
+  }
+
+  if (input.kind === 'empty-rack-yard') {
+    return {
+      ...base,
+      kind: 'empty-rack-yard',
+      emptyRackYard: createEmptyRackYardConfig({ code: base.name, ...(input.emptyRackYard ?? {}) }),
     };
   }
 

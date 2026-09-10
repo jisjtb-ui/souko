@@ -44,14 +44,23 @@ export default function App(): JSX.Element {
       }
       if (e.key === 'Delete' || e.key === 'Backspace') {
         e.preventDefault();
-        store.deleteSelected();
+        if (store.selectedAreaId) store.deleteArea(store.selectedAreaId);
+        else if (store.selectedConnectionId) store.deleteConnection(store.selectedConnectionId);
+        else store.deleteSelected();
         return;
       }
       if (e.key.toLowerCase() === 'r') {
         store.rotateSelected(e.shiftKey ? -90 : 90);
         return;
       }
+      if (e.key === 'Enter' && store.polygonDraft && store.polygonDraft.length >= 3) {
+        e.preventDefault();
+        store.finishPolygonArea();
+        return;
+      }
       if (e.key === 'Escape') {
+        if (store.polygonDraft) store.cancelPolygonArea();
+        if (store.connectFromAreaId) store.setTool('select');
         store.setPlacingKind(null);
         store.clearRoute();
         store.clearSelection();

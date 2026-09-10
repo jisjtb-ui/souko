@@ -33,7 +33,7 @@ export function GridLayer({ warehouse, scale, visible }: Props): JSX.Element {
         <Line
           key={`v${x.toFixed(3)}`}
           points={[x, 0, x, depthM]}
-          stroke={isMajor ? '#c3ccd6' : '#e4e9ee'}
+          stroke={isMajor ? '#ccd5df' : '#dfe5eb'}
           strokeWidth={hairline}
           listening={false}
         />,
@@ -45,7 +45,7 @@ export function GridLayer({ warehouse, scale, visible }: Props): JSX.Element {
         <Line
           key={`h${y.toFixed(3)}`}
           points={[0, y, widthM, y]}
-          stroke={isMajor ? '#c3ccd6' : '#e4e9ee'}
+          stroke={isMajor ? '#ccd5df' : '#dfe5eb'}
           strokeWidth={hairline}
           listening={false}
         />,
@@ -86,7 +86,17 @@ export function GridLayer({ warehouse, scale, visible }: Props): JSX.Element {
 
   return (
     <Group>
-      <Rect x={0} y={0} width={widthM} height={depthM} fill="#ffffff" stroke="#5a646e" strokeWidth={2 / scale} />
+      {/* 敷地（この上にエリア＝建屋の床を重ねる） */}
+      <Rect
+        x={0}
+        y={0}
+        width={widthM}
+        height={depthM}
+        fill="#e8ecf1"
+        stroke="#aab4bf"
+        strokeWidth={1.5 / scale}
+        dash={[1.2, 0.8]}
+      />
       {lines}
       {ticks}
     </Group>

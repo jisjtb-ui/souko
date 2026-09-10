@@ -157,6 +157,8 @@ export function findPath(
 
       const nIdx = grid.index(nx, ny);
       if (closed[nIdx]) continue;
+      // エリアをまたぐ移動は、通行可能な接続口を通る場合のみ許可する
+      if (!grid.canTraverse(current, nIdx)) continue;
       const tentative = gScore[current]! + step * nCost;
       if (tentative < gScore[nIdx]!) {
         gScore[nIdx] = tentative;

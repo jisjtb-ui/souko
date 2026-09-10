@@ -1,4 +1,11 @@
 import type { ID } from './ids.js';
+import type { Area, AreaConnection, Shutter } from './areas.js';
+import type {
+  EmptyRackYardConfig,
+  InboundGateConfig,
+  OutboundGateConfig,
+  RackCategory,
+} from './logistics.js';
 
 /* ============================================================================
  * 座標系について
@@ -76,12 +83,18 @@ export type LayoutObjectKind =
   | 'work-area'
   | 'pedestrian-area'
   | 'no-entry-area'
-  | 'forklift';
+  | 'forklift'
+  // --- 物流シミュレーション用 ---
+  | 'inbound-gate' // 倉入れ口
+  | 'outbound-gate' // 出荷ゲート
+  | 'empty-rack-yard'; // 空ラック置き場
 
 /** 全配置オブジェクト共通のプロパティ。 */
 export interface LayoutObjectBase {
   id: ID;
   layoutId: ID;
+  /** 所属エリア。中心座標を含むエリアから自動判定される。 */
+  areaId?: ID;
   kind: LayoutObjectKind;
   name: string;
   /** 左上座標 (m) */
@@ -132,6 +145,15 @@ export interface RackSpec {
   /** ピッキング面 */
   face: RackFace;
   naming: LocationNamingRule;
+  /**
+   * この保管ラック構造が受け入れる可搬ラックの種別 (RackType.id)。
+   * 未設定なら category で判定し、それも無ければ全種別を受け入れる。
+   */
+  rackTypeId?: ID;
+  /** 受け入れるラックサイズ区分 (rackTypeId 未設定時のフォールバック) */
+  rackCategory?: RackCategory;
+  /** 優先保管エリアのタグ (商品サイズの preferredAreaTag と突き合わせる) */
+  areaTag?: string;
 }
 
 export interface RackObject extends LayoutObjectBase {
@@ -141,7 +163,10 @@ export interface RackObject extends LayoutObjectBase {
 
 /** ゾーン系 (エリア/壁/柱/出入口など) の追加属性。 */
 export interface ZoneObject extends LayoutObjectBase {
-  kind: Exclude<LayoutObjectKind, 'rack' | 'shelf' | 'forklift'>;
+  kind: Exclude<
+    LayoutObjectKind,
+    'rack' | 'shelf' | 'forklift' | 'inbound-gate' | 'outbound-gate' | 'empty-rack-yard'
+  >;
   /** 走行可能か (壁・柱・立入禁止は false) */
   traversable: boolean;
   /** 入庫/出荷/一時置きの受け渡し点として使えるか */
@@ -153,7 +178,33 @@ export interface ForkliftObject extends LayoutObjectBase {
   forklift: ForkliftSpec;
 }
 
-export type LayoutObject = RackObject | ZoneObject | ForkliftObject;
+/** 倉入れ口 (入庫ゲート)。 */
+export interface InboundGateObject extends LayoutObjectBase {
+  kind: 'inbound-gate';
+  inboundGate: InboundGateConfig;
+}
+
+/** 出荷ゲート。 */
+export interface OutboundGateObject extends LayoutObjectBase {
+  kind: 'outbound-gate';
+  outboundGate: OutboundGateConfig;
+}
+
+/** 空ラック置き場。 */
+export interface EmptyRackYardObject extends LayoutObjectBase {
+  kind: 'empty-rack-yard';
+  emptyRackYard: EmptyRackYardConfig;
+}
+
+export type GateObject = InboundGateObject | OutboundGateObject;
+
+export type LayoutObject =
+  | RackObject
+  | ZoneObject
+  | ForkliftObject
+  | InboundGateObject
+  | OutboundGateObject
+  | EmptyRackYardObject;
 
 export function isRackObject(o: LayoutObject): o is RackObject {
   return o.kind === 'rack' || o.kind === 'shelf';
@@ -161,8 +212,22 @@ export function isRackObject(o: LayoutObject): o is RackObject {
 export function isForkliftObject(o: LayoutObject): o is ForkliftObject {
   return o.kind === 'forklift';
 }
+export function isInboundGateObject(o: LayoutObject): o is InboundGateObject {
+  return o.kind === 'inbound-gate';
+}
+export function isOutboundGateObject(o: LayoutObject): o is OutboundGateObject {
+  return o.kind === 'outbound-gate';
+}
+export function isEmptyRackYardObject(o: LayoutObject): o is EmptyRackYardObject {
+  return o.kind === 'empty-rack-yard';
+}
+export function isGateObject(o: LayoutObject): o is GateObject {
+  return isInboundGateObject(o) || isOutboundGateObject(o);
+}
 export function isZoneObject(o: LayoutObject): o is ZoneObject {
-  return !isRackObject(o) && !isForkliftObject(o);
+  return (
+    !isRackObject(o) && !isForkliftObject(o) && !isGateObject(o) && !isEmptyRackYardObject(o)
+  );
 }
 
 /* ------------------------------------------------------------------ Location */
@@ -170,6 +235,8 @@ export function isZoneObject(o: LayoutObject): o is ZoneObject {
 export interface Location {
   id: ID;
   layoutId: ID;
+  /** 所属エリア（ラックのエリアを継承する） */
+  areaId?: ID;
   rackId: ID;
   /** ロケーション番号 (A-01-02 など)。レイアウト内で一意。 */
   code: string;
@@ -455,6 +522,12 @@ export interface Path {
 export interface LayoutSnapshot {
   warehouse: Warehouse;
   layout: Layout;
+  /** 倉庫を構成する区画。空の場合は倉庫矩形全体が1エリア扱い（旧データ互換）。 */
+  areas: Area[];
+  /** エリア間の接続口 */
+  connections: AreaConnection[];
+  /** 接続口に設置されたシャッター */
+  shutters: Shutter[];
   objects: LayoutObject[];
   locations: Location[];
 }

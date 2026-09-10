@@ -4,8 +4,9 @@ import { useEditorStore } from '../store/editorStore';
 
 const GROUPS: { key: string; label: string }[] = [
   { key: 'storage', label: '保管設備' },
+  { key: 'logistics', label: '入出荷設備' },
   { key: 'structure', label: '構造物' },
-  { key: 'area', label: 'エリア' },
+  { key: 'area', label: '区域' },
   { key: 'equipment', label: '車両' },
 ];
 
@@ -20,6 +21,12 @@ export function Toolbar(): JSX.Element {
   const setPlacingKind = useEditorStore((s) => s.setPlacingKind);
   const options = useEditorStore((s) => s.options);
   const setOption = useEditorStore((s) => s.setOption);
+  const startPolygonArea = useEditorStore((s) => s.startPolygonArea);
+  const polygonDraft = useEditorStore((s) => s.polygonDraft);
+  const finishPolygonArea = useEditorStore((s) => s.finishPolygonArea);
+  const cancelPolygonArea = useEditorStore((s) => s.cancelPolygonArea);
+  const areaCount = useEditorStore((s) => s.areas.length);
+  const connectionCount = useEditorStore((s) => s.connections.length);
 
   const pick = (kind: LayoutObjectKind): void => {
     setPlacingKind(placingKind === kind ? null : kind);
@@ -40,6 +47,54 @@ export function Toolbar(): JSX.Element {
             ➜ 経路確認
           </button>
         </div>
+      </div>
+
+      <div className="panel-block">
+        <div className="panel-title">倉庫の形（エリア {areaCount} / 接続 {connectionCount}）</div>
+        <div className="tool-row">
+          <button
+            type="button"
+            className={tool === 'area-rect' ? 'tool active' : 'tool'}
+            onClick={() => setTool(tool === 'area-rect' ? 'select' : 'area-rect')}
+            title="ドラッグして矩形エリアを追加します"
+          >
+            ▭ 矩形
+          </button>
+          <button
+            type="button"
+            className={tool === 'area-polygon' ? 'tool active' : 'tool'}
+            onClick={() => (tool === 'area-polygon' ? cancelPolygonArea() : startPolygonArea())}
+            title="クリックで頂点を追加し、始点をクリックすると確定します"
+          >
+            ⬟ 多角形
+          </button>
+        </div>
+        <div className="tool-row">
+          <button
+            type="button"
+            className={tool === 'connect' ? 'tool active' : 'tool'}
+            onClick={() => setTool(tool === 'connect' ? 'select' : 'connect')}
+            title="2つのエリアを順にクリックすると接続口を作ります"
+          >
+            ⇔ 接続口を追加
+          </button>
+        </div>
+        {tool === 'area-polygon' && (
+          <div className="draft-hint">
+            <span>
+              頂点 {polygonDraft?.length ?? 0} 個
+              {(polygonDraft?.length ?? 0) >= 3 ? ' — 始点クリック / Enter で確定' : ' — 3点以上必要です'}
+            </span>
+            <div className="btn-row">
+              <button type="button" onClick={finishPolygonArea} disabled={(polygonDraft?.length ?? 0) < 3}>
+                確定
+              </button>
+              <button type="button" onClick={cancelPolygonArea}>
+                取消 (Esc)
+              </button>
+            </div>
+          </div>
+        )}
       </div>
 
       <div className="panel-block scroll">

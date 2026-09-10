@@ -1,10 +1,23 @@
-import type { Layout, LayoutObject, LayoutSnapshot, Location, Product, Warehouse } from '@ws/shared';
+import type {
+  Area,
+  AreaConnection,
+  Layout,
+  LayoutObject,
+  LayoutSnapshot,
+  Location,
+  Product,
+  ProductSize,
+  RackType,
+  Shutter,
+  Warehouse,
+} from '@ws/shared';
 
 export interface WarehouseSummary extends Warehouse {
   layoutCount: number;
 }
 
 export interface SaveResult extends LayoutSnapshot {
+  totalAreaM2?: number;
   warnings?: { duplicateLocationCodes?: string[] };
 }
 
@@ -50,8 +63,33 @@ export const api = {
 
   saveLayout: (
     id: string,
-    payload: { objects: LayoutObject[]; locations: Location[]; warehouse?: Partial<Warehouse> },
+    payload: {
+      objects: LayoutObject[];
+      locations: Location[];
+      areas?: Area[];
+      connections?: AreaConnection[];
+      shutters?: Shutter[];
+      warehouse?: Partial<Warehouse>;
+    },
   ) => request<SaveResult>(`/layouts/${id}`, { method: 'PUT', body: JSON.stringify(payload) }),
+
+  listRackTypes: (warehouseId: string) =>
+    request<{ rackTypes: RackType[] }>(`/warehouses/${warehouseId}/rack-types`),
+
+  saveRackTypes: (warehouseId: string, rackTypes: RackType[]) =>
+    request<{ rackTypes: RackType[] }>(`/warehouses/${warehouseId}/rack-types`, {
+      method: 'PUT',
+      body: JSON.stringify({ rackTypes }),
+    }),
+
+  listProductSizes: (warehouseId: string) =>
+    request<{ productSizes: ProductSize[] }>(`/warehouses/${warehouseId}/product-sizes`),
+
+  saveProductSizes: (warehouseId: string, productSizes: ProductSize[]) =>
+    request<{ productSizes: ProductSize[] }>(`/warehouses/${warehouseId}/product-sizes`, {
+      method: 'PUT',
+      body: JSON.stringify({ productSizes }),
+    }),
 
   listProducts: (warehouseId: string) => request<{ products: Product[] }>(`/warehouses/${warehouseId}/products`),
 
