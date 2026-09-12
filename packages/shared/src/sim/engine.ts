@@ -32,6 +32,7 @@ import {
   yardAccepts,
 } from './stacking.js';
 import { buildRackIndex, findFreeLocation, findStoredRackForSize } from './slotting.js';
+import { Heatmap } from './heatmap.js';
 import type { ID } from '../domain/ids.js';
 import type {
   GateStatus,
@@ -110,6 +111,8 @@ interface Task {
   reservedLocationIds: ID[];
   /** 出庫元のロケーション（在庫が残った場合の戻し先） */
   sourceLocationId?: ID;
+  /** この作業の主目的地（搬送距離ヒートの集計先） */
+  focusPoint?: Vec2;
   /** 割当済みのラック（重複割当防止用） */
   claimedRackId?: ID;
 }
@@ -156,6 +159,8 @@ export interface Gate {
   code: string;
   name: string;
   point: Vec2;
+  /** ゲートの占有範囲（滞留ヒートを面で表すために使う） */
+  footprint: { x: number; y: number; widthM: number; depthM: number };
   capacityPerHour: number;
   concurrentSlots: number;
   openFromSec: number;
@@ -196,6 +201,8 @@ export interface SimulationSnapshot {
   occupancy: Map<ID, ID>;
   events: SimulationEvent[];
   metrics: SimulationKpi;
+  /** 走行・渋滞・作業の分布（参照渡し。描画と分析に使う） */
+  heatmap: Heatmap;
   pendingInbound: number;
   pendingOutbound: number;
   unfulfilledOutboundUnits: number;
@@ -265,6 +272,8 @@ export class LogisticsSimulation {
   private readonly grid: NavGrid;
   private readonly pathCache = new Map<string, PathResult>();
   private readonly random: Random;
+  /** 走行・渋滞・作業の分布 (要件14) */
+  private readonly heat: Heatmap;
 
   private readonly locationsById = new Map<ID, Location>();
   private readonly racksById: ReturnType<typeof buildRackIndex>;
@@ -313,6 +322,13 @@ export class LogisticsSimulation {
     this.random = new Random(input.config.seed);
     this.startSec = parseClock(input.config.startTime);
     this.endSec = parseClock(input.config.endTime);
+
+    // ヒートマップは 1m 格子で集計する（描画・分析に十分な粒度）
+    this.heat = new Heatmap(
+      Math.max(input.warehouse.widthM, ...input.locations.map((l) => l.x + 2), 1),
+      Math.max(input.warehouse.depthM, ...input.locations.map((l) => l.y + 2), 1),
+      1,
+    );
 
     this.grid = NavGrid.fromLayout(input.warehouse, input.objects, {
       cellM: input.config.pathGridM,
@@ -389,6 +405,7 @@ export class LogisticsSimulation {
       code: config.code,
       name: obj.name,
       point: objectCenter(obj),
+      footprint: { x: obj.x, y: obj.y, widthM: obj.widthM, depthM: obj.depthM },
       capacityPerHour: Math.max(1, config.capacityPerHour),
       concurrentSlots: Math.max(1, config.concurrentSlots),
       openFromSec: parseClock(config.openFrom) - this.startSec,
@@ -675,6 +692,7 @@ export class LogisticsSimulation {
       travelledM: 0,
       reservedLocationIds: [candidate.location.id],
       claimedRackId: rack.id,
+      focusPoint: { x: candidate.location.x, y: candidate.location.y },
       steps: [
         { kind: 'move', target: fromPoint, label: `${label}: ラックを取りに移動` },
         {
@@ -751,6 +769,7 @@ export class LogisticsSimulation {
         travelledM: 0,
         reservedLocationIds: [location.id],
         sourceLocationId: location.id,
+        focusPoint: { x: location.x, y: location.y },
         steps: [
           {
             kind: 'move',
@@ -911,6 +930,7 @@ export class LogisticsSimulation {
       // 荷役系（格納 / 取得 / 積み重ね）
       vehicle.stepTimer -= dt;
       vehicle.state = 'handling';
+      this.heat.addPoint('work', { x: vehicle.x, y: vehicle.y }, dt);
       if (vehicle.stepTimer <= 0) {
         this.finishStep(vehicle, step);
       }
@@ -932,6 +952,7 @@ export class LogisticsSimulation {
         vehicle.state = 'blocked';
         vehicle.activity = '通路待ち（対向車）';
         vehicle.waitingSeconds += dt;
+        this.heat.addPoint('congestion', { x: vehicle.x, y: vehicle.y }, dt);
         return;
       }
     } else {
@@ -942,7 +963,10 @@ export class LogisticsSimulation {
     const limitMps = kmhToMps(this.input.config.speedLimitKmh);
     const travel = speedMps * dt;
 
+    const previous = { x: vehicle.x, y: vehicle.y };
     const result = advanceAlongPath(path.points, { x: vehicle.x, y: vehicle.y }, vehicle.pathIndex, travel);
+    // 走行距離を通過セルへ按分する（よく通る場所＝主要動線）
+    this.heat.addSegment('traffic', previous, result.position, result.movedM);
     vehicle.x = result.position.x;
     vehicle.y = result.position.y;
     vehicle.headingDeg = result.headingDeg;
@@ -1006,6 +1030,7 @@ export class LogisticsSimulation {
         vehicle.activity = `${gate.name}のバース待ち`;
         vehicle.waitingSeconds += dt;
         gate.forkliftWaitSeconds += dt;
+        this.heat.addPoint('congestion', { x: vehicle.x, y: vehicle.y }, dt);
         return;
       }
       gate.queue = gate.queue.filter((id) => id !== vehicle.id);
@@ -1016,6 +1041,7 @@ export class LogisticsSimulation {
     }
 
     vehicle.stepTimer -= dt;
+    this.heat.addPoint('work', { x: vehicle.x, y: vehicle.y }, dt);
     if (vehicle.stepTimer <= 0) {
       gate.serving = gate.serving.filter((id) => id !== vehicle.id);
       gate.busySlots = gate.serving.length;
@@ -1191,6 +1217,10 @@ export class LogisticsSimulation {
     for (const id of task.reservedLocationIds) this.reserved.delete(id);
     if (task.claimedRackId) this.claimedRacks.delete(task.claimedRackId);
     task.finishedAtSec = this.timeSec;
+    // 「どの保管場所が遠いか」を見るため、走行距離を目的地へ集計する
+    if (task.focusPoint && task.travelledM > 0) {
+      this.heat.addPoint('distance', task.focusPoint, task.travelledM);
+    }
     this.completedTasks++;
     this.totalTaskSeconds += this.timeSec - (task.startedAtSec ?? this.timeSec);
     vehicle.completedTasks++;
@@ -1246,7 +1276,11 @@ export class LogisticsSimulation {
               ? 'queued'
               : 'idle';
 
-      if (load > 0) gate.totalWaitSeconds += load * dt;
+      if (load > 0) {
+        gate.totalWaitSeconds += load * dt;
+        // ゲート前の滞留もヒートマップの「詰まり」として記録する（面で按分）
+        this.heat.addRect('congestion', gate.footprint, load * dt);
+      }
       gate.peakQueueLength = Math.max(gate.peakQueueLength, load);
     }
   }
@@ -1471,6 +1505,7 @@ export class LogisticsSimulation {
       occupancy: new Map(this.occupancy),
       events: this.events,
       metrics: this.kpi(),
+      heatmap: this.heat,
       pendingInbound: this.inboundPlan.length - this.inboundCursor + this.inboundQueue.length,
       pendingOutbound:
         this.outboundPlan.length - this.outboundCursor + this.retrievalQueue.length,

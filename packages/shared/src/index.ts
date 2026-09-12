@@ -26,6 +26,7 @@ export * from './sim/racks.js';
 export * from './sim/eventGeneration.js';
 export * from './sim/slotting.js';
 export * from './sim/engine.js';
+export * from './sim/heatmap.js';
 export * from './sim/analysis.js';
 export * from './sim/stacking.js';
 

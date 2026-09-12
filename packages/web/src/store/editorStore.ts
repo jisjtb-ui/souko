@@ -31,6 +31,7 @@ import type {
   AreaKind,
   AreaStats,
   GridSizeM,
+  HeatmapLayerKey,
   Layout,
   LayoutObject,
   LayoutObjectKind,
@@ -65,6 +66,8 @@ export interface Viewport {
 }
 
 export interface ViewOptions {
+  /** ヒートマップの表示レイヤー（null = 非表示） */
+  heatmapLayer: HeatmapLayerKey | null;
   showGrid: boolean;
   showLocations: boolean;
   showLocationCodes: boolean;
@@ -245,6 +248,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   placingKind: null,
   view: { zoom: 1, offsetX: 40, offsetY: 40 },
   options: {
+    heatmapLayer: null,
     showGrid: true,
     showLocations: true,
     showLocationCodes: false,

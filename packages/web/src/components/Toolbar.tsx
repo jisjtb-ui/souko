@@ -1,6 +1,8 @@
-import { OBJECT_SPEC_LIST } from '@ws/shared';
-import type { LayoutObjectKind } from '@ws/shared';
+import { HEATMAP_LAYERS, HEATMAP_LAYER_META, OBJECT_SPEC_LIST } from '@ws/shared';
+import type { HeatmapLayerKey, LayoutObjectKind } from '@ws/shared';
 import { useEditorStore } from '../store/editorStore';
+import { useSimulationStore } from '../store/simulationStore';
+import { HeatmapLegend } from './HeatmapLegend';
 
 const GROUPS: { key: string; label: string }[] = [
   { key: 'storage', label: '保管設備' },
@@ -14,6 +16,53 @@ const GROUPS: { key: string; label: string }[] = [
  * 左サイドのツールバー。
  * クリックして配置、またはマップへドラッグ＆ドロップで配置できる。
  */
+/**
+ * ヒートマップの表示切替 (要件14)。
+ * シミュレーションの走行データが無いうちは操作できないようにする。
+ */
+function HeatmapControls(): JSX.Element {
+  const options = useEditorStore((s) => s.options);
+  const setOption = useEditorStore((s) => s.setOption);
+  const snapshot = useSimulationStore((s) => s.snapshot);
+  const hasData = Boolean(snapshot && snapshot.heatmap.maxOf('traffic') > 0);
+  const current = options.heatmapLayer;
+
+  return (
+    <div className="panel-block">
+      <div className="panel-title">ヒートマップ</div>
+      <div className="heat-tabs">
+        <button
+          type="button"
+          className={current === null ? 'heat-tab active' : 'heat-tab'}
+          onClick={() => setOption('heatmapLayer', null)}
+        >
+          なし
+        </button>
+        {HEATMAP_LAYERS.map((layer: HeatmapLayerKey) => (
+          <button
+            key={layer}
+            type="button"
+            className={current === layer ? 'heat-tab active' : 'heat-tab'}
+            disabled={!hasData}
+            title={HEATMAP_LAYER_META[layer].description}
+            onClick={() => setOption('heatmapLayer', layer)}
+          >
+            {HEATMAP_LAYER_META[layer].label}
+          </button>
+        ))}
+      </div>
+
+      {!hasData && <p className="muted small">シミュレーションを実行すると表示できます。</p>}
+      {hasData && current && snapshot && (
+        <>
+          <HeatmapLegend layer={current} heatmap={snapshot.heatmap} />
+          <p className="muted small">{HEATMAP_LAYER_META[current].description}</p>
+        </>
+      )}
+    </div>
+  );
+}
+
 export function Toolbar(): JSX.Element {
   const tool = useEditorStore((s) => s.tool);
   const setTool = useEditorStore((s) => s.setTool);
@@ -125,6 +174,8 @@ export function Toolbar(): JSX.Element {
           </div>
         ))}
       </div>
+
+      <HeatmapControls />
 
       <div className="panel-block">
         <div className="panel-title">表示</div>

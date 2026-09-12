@@ -1096,3 +1096,69 @@ button.link {
   color: var(--danger);
   font-weight: 600;
 }
+
+/* ------------------------------------------------------------ ヒートマップ */
+
+.heat-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 3px;
+}
+
+.heat-tab {
+  flex: 1 1 auto;
+  min-width: 44px;
+  height: 24px;
+  padding: 0 6px;
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  background: #fff;
+  cursor: pointer;
+  font-size: 11px;
+}
+
+.heat-tab:hover:not(:disabled) {
+  background: #f0f4f9;
+}
+
+.heat-tab.active {
+  background: var(--accent);
+  border-color: var(--accent-dark);
+  color: #fff;
+  font-weight: 600;
+}
+
+.heat-tab:disabled {
+  opacity: 0.45;
+  cursor: default;
+}
+
+.heat-legend {
+  margin-top: 8px;
+}
+
+.heat-legend-title {
+  font-size: 11px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.heat-legend-scale {
+  display: flex;
+  height: 10px;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.heat-legend-scale span {
+  flex: 1;
+}
+
+.heat-legend-axis {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 3px;
+  font-size: 10px;
+  color: var(--muted);
+}

@@ -141,6 +141,8 @@ export const useSimulationStore = create<SimulationState>((set, get) => ({
             snapshot,
             rackTypes: useEditorStore.getState().rackTypes,
             plannedSeconds: plannedSeconds(current.config),
+            objects: useEditorStore.getState().objects,
+            areas: useEditorStore.getState().areas,
           }),
         });
         rafHandle = null;
@@ -186,6 +188,8 @@ export const useSimulationStore = create<SimulationState>((set, get) => ({
           snapshot,
           rackTypes: useEditorStore.getState().rackTypes,
           plannedSeconds: plannedSeconds(state.config),
+          objects: useEditorStore.getState().objects,
+          areas: useEditorStore.getState().areas,
         }),
       });
     } catch (error) {

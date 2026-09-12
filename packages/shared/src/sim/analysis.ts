@@ -1,7 +1,13 @@
-import { formatDurationJa } from '../geometry/index.js';
+import { distance, formatDurationJa, objectCenter } from '../geometry/index.js';
+import { areaWorldPolygon } from '../domain/areas.js';
+import { pointInPolygon } from '../geometry/polygon.js';
 import { stackUtilization } from './stacking.js';
+import { HEATMAP_LAYER_META } from './heatmap.js';
 import type { ID } from '../domain/ids.js';
 import type { RackType } from '../domain/logistics.js';
+import type { Area } from '../domain/areas.js';
+import type { LayoutObject, Vec2 } from '../domain/types.js';
+import type { Hotspot } from './heatmap.js';
 import type { SimulationKpi, SimulationSnapshot } from './engine.js';
 
 /* ============================================================================
@@ -38,6 +44,36 @@ export interface AnalysisInput {
   rackTypes: readonly RackType[];
   /** シミュレーションの想定稼働時間（秒） */
   plannedSeconds: number;
+  /** 地点名を特定するための配置情報（任意） */
+  objects?: readonly LayoutObject[];
+  areas?: readonly Area[];
+}
+
+/**
+ * 座標を人が読める地点名にする。
+ * 「北側通路で待機が発生しています」のように、場所を名指しで伝えるために使う。
+ */
+export function describePoint(
+  point: Vec2,
+  objects: readonly LayoutObject[] = [],
+  areas: readonly Area[] = [],
+): string {
+  const area = areas.find((a) => pointInPolygon(point, areaWorldPolygon(a)));
+  const coords = `(${point.x.toFixed(0)}, ${point.y.toFixed(0)})`;
+
+  // 近くの名前付きオブジェクトを探す（10m以内）
+  let nearest: { name: string; dist: number } | undefined;
+  for (const obj of objects) {
+    if (obj.kind === 'forklift') continue;
+    const d = distance(point, objectCenter(obj));
+    if (d > 10) continue;
+    if (!nearest || d < nearest.dist) nearest = { name: obj.name, dist: d };
+  }
+
+  if (nearest && area) return `${area.name} ${nearest.name}付近 ${coords}`;
+  if (nearest) return `${nearest.name}付近 ${coords}`;
+  if (area) return `${area.name} ${coords}`;
+  return coords;
 }
 
 /** シミュレーション結果からボトルネックを抽出する。 */
@@ -164,17 +200,50 @@ export function analyzeBottlenecks(input: AnalysisInput): Bottleneck[] {
     }
   }
 
-  /* --- 通路（渋滞） --- */
+  /* --- 通路（渋滞）: ヒートマップから詰まっている「場所」を特定する --- */
   const totalWait = snapshot.vehicles.reduce((sum, v) => sum + v.waitingSeconds, 0);
-  if (totalWait > kpi.elapsedSeconds * 0.3) {
+  const congestionSpots: Hotspot[] = snapshot.heatmap
+    ? snapshot.heatmap.hotspots('congestion', 3, 5)
+    : [];
+
+  for (const [index, spot] of congestionSpots.entries()) {
+    // 全体の待機時間に対して無視できない割合を占める地点だけ報告する
+    if (spot.value < 60 || spot.value < totalWait * 0.05) continue;
+    const perTask = spot.value / Math.max(1, kpi.completedTasks);
+    found.push({
+      id: `congestion-spot-${index}`,
+      category: 'aisle',
+      severity: spot.value > kpi.elapsedSeconds * 0.25 ? 'critical' : 'warning',
+      title: `${describePoint(spot, input.objects, input.areas)}で待機が発生しています`,
+      detail: `この地点での停止時間 合計 ${formatDurationJa(spot.value)}（1作業あたり平均 ${perTask.toFixed(0)}秒）。通路幅の確保・動線の分離・ゲートの分散を検討してください。`,
+    });
+  }
+
+  if (congestionSpots.length === 0 && totalWait > kpi.elapsedSeconds * 0.3) {
     const avgPerTask = totalWait / Math.max(1, kpi.completedTasks);
     found.push({
       id: 'aisle-congestion',
       category: 'aisle',
       severity: totalWait > kpi.elapsedSeconds ? 'critical' : 'warning',
       title: '通路で待機が発生しています',
-      detail: `全車の待機時間 合計 ${formatDurationJa(totalWait)}（1作業あたり平均 ${avgPerTask.toFixed(0)}秒）。通路幅の確保や動線の分離を検討してください。`,
+      detail: `全車の待機時間 合計 ${formatDurationJa(totalWait)}（1作業あたり平均 ${avgPerTask.toFixed(0)}秒）。`,
     });
+  }
+
+  /* --- 動線の集中 --- */
+  if (snapshot.heatmap) {
+    const trafficSpots = snapshot.heatmap.hotspots('traffic', 1, 6);
+    const top = trafficSpots[0];
+    const totalTraffic = snapshot.heatmap.totalOf('traffic');
+    if (top && totalTraffic > 0) {
+      found.push({
+        id: 'traffic-hotspot',
+        category: 'aisle',
+        severity: 'info',
+        title: `動線が集中しているのは ${describePoint(top, input.objects, input.areas)} です`,
+        detail: `この1mマスをのべ ${Math.round(top.value).toLocaleString()}m 走行しています（全走行の ${Math.round((top.value / totalTraffic) * 100)}%）。${HEATMAP_LAYER_META.traffic.description}`,
+      });
+    }
   }
 
   /* --- 保管容量 --- */

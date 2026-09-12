@@ -11,6 +11,7 @@ import { GridLayer } from './GridLayer';
 import { LocationLayer } from './LocationLayer';
 import { ObjectShape } from './ObjectShape';
 import { ObstacleOverlay, RouteOverlay, SelectionBox } from './OverlayLayers';
+import { HeatmapOverlay } from './HeatmapLayer';
 import { SimulationLayer } from './SimulationLayer';
 import { useSimulationStore } from '../store/simulationStore';
 
@@ -442,6 +443,14 @@ export function WarehouseCanvas(): JSX.Element {
                 showCodes={options.showLocationCodes}
                 highlightRackId={highlightRackId}
               />
+            )}
+
+            {/*
+              ヒートマップは配置オブジェクトの上に重ねる。
+              渋滞はゲート上で起きるため、下に敷くとゲートの塗りに隠れてしまう。
+            */}
+            {simSnapshot && options.heatmapLayer && (
+              <HeatmapOverlay heatmap={simSnapshot.heatmap} layer={options.heatmapLayer} />
             )}
 
             {simSnapshot && (
