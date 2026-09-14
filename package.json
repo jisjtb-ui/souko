@@ -18,6 +18,7 @@
     "dev": "concurrently -n shared,server,web -c cyan,magenta,green \"npm -w @ws/shared run dev\" \"npm -w @ws/server run dev\" \"npm -w @ws/web run dev\"",
     "prebuild": "npm run build:shared",
     "build": "npm -w @ws/server run build && npm -w @ws/web run build",
+    "prestart": "npm run build",
     "start": "npm -w @ws/server run start",
     "test": "npm -w @ws/shared run test && npm -w @ws/server run test",
     "typecheck": "npm -w @ws/shared run typecheck && npm -w @ws/server run typecheck && npm -w @ws/web run typecheck"

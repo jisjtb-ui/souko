@@ -40,9 +40,12 @@ npm run dev     # http://localhost:5173 （APIは 5178 で起動）
 ```bash
 npm run build   # 型チェック + 本番ビルド
 npm start       # http://localhost:5178 で API + ビルド済みUIを配信
-npm test        # ドメイン + API のテスト (35件)
+npm test        # ドメイン + API のテスト (170件)
 npm run typecheck
 ```
+
+`npm start` は起動前に自動でビルドします（`dist/` はリポジトリに含まれないため、
+クローン直後でも `npm install` のあと `npm start` だけで動きます）。
 
 データベースは既定で `data/warehouse.db` に作成されます（`DB_FILE` 環境変数で変更可）。
 
