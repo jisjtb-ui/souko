@@ -154,6 +154,14 @@ export interface RackSpec {
   rackCategory?: RackCategory;
   /** 優先保管エリアのタグ (商品サイズの preferredAreaTag と突き合わせる) */
   areaTag?: string;
+  /**
+   * 奥行きレーン数。1レーン (= 1列) に何本分の深さがあるか。
+   *
+   * 未設定は 1 (奥行き方向の段積みなし) として扱う。既存レイアウトは
+   * この値を持たないため、従来どおりの挙動になる。
+   * 参照は必ず laneDepthOf() を通すこと。
+   */
+  laneDepth?: number;
 }
 
 export interface RackObject extends LayoutObjectBase {
@@ -228,6 +236,21 @@ export function isZoneObject(o: LayoutObject): o is ZoneObject {
   return (
     !isRackObject(o) && !isForkliftObject(o) && !isGateObject(o) && !isEmptyRackYardObject(o)
   );
+}
+
+/** 既定の奥行きレーン数 (奥行き方向の段積みなし)。 */
+export const DEFAULT_LANE_DEPTH = 1;
+
+/**
+ * ラックの奥行きレーン数を取得する。
+ *
+ * laneDepth を持たない既存レイアウトは 1 として扱うため、
+ * この関数を通す限り従来の挙動は変わらない。
+ */
+export function laneDepthOf(rack: RackSpec): number {
+  const depth = rack.laneDepth;
+  if (typeof depth !== 'number' || !Number.isFinite(depth)) return DEFAULT_LANE_DEPTH;
+  return Math.max(DEFAULT_LANE_DEPTH, Math.floor(depth));
 }
 
 /* ------------------------------------------------------------------ Location */
