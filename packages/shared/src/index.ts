@@ -22,6 +22,7 @@ export * from './sim/navGrid.js';
 export * from './sim/astar.js';
 export * from './sim/travel.js';
 export * from './sim/random.js';
+export * from './sim/mixes.js';
 export * from './sim/racks.js';
 export * from './sim/eventGeneration.js';
 export * from './sim/slotting.js';

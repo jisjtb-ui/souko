@@ -6,9 +6,12 @@ import { useEditorStore } from '../store/editorStore';
 /**
  * ラック設定ダイアログ。
  *
- * 「サイズ → 列数・段数 → ロケーション番号 → 自動生成」という
+ * 「サイズ → 列数 → ロケーション番号 → 自動生成」という
  * 現場の手順どおりの並びにして、説明書なしで進められるようにしている。
  * 細かい設定は「詳細設定」に隠す。
+ *
+ * レイアウトで決めるのは列数だけ。段数と1ラックの入り本数は
+ * シミュレーション設定の「段数の割合」「入り本数の割合」で決める。
  */
 export function RackDialog(): JSX.Element | null {
   const draft = useEditorStore((s) => s.rackDraft);
@@ -36,30 +39,39 @@ function RackDialogInner({ object, isNew, onCancel, onApply }: InnerProps): JSX.
   const setNaming = (patch: Partial<LocationNamingRule>): void =>
     setSpec((s) => ({ ...s, naming: { ...s.naming, ...patch } }));
 
-  const total = spec.columns * spec.levels;
+  // 1列 = 1ロケーション。段数はシミュレーション時に決まる。
+  const total = spec.columns;
   const bayWidth = widthM / Math.max(1, spec.columns);
   const preview = useMemo(
-    () => previewLocationCodes(spec.naming, spec.columns, spec.levels, 8),
-    [spec.naming, spec.columns, spec.levels],
+    () => previewLocationCodes(spec.naming, spec.columns, 1, 8),
+    [spec.naming, spec.columns],
   );
   const errors = useMemo(() => {
     const list = validateNamingRule(spec.naming);
     if (widthM <= 0 || depthM <= 0) list.push('サイズは0より大きい値にしてください');
-    if (spec.columns < 1 || spec.levels < 1) list.push('列数・段数は1以上にしてください');
+    if (spec.columns < 1) list.push('列数は1以上にしてください');
     if (bayWidth < 0.3) list.push('間口が狭すぎます。列数を減らすか幅を広げてください');
     return list;
   }, [spec, widthM, depthM, bayWidth]);
 
   const submit = (): void => {
     if (errors.length > 0) return;
-    onApply({ object: { ...object, name, widthM, depthM }, spec });
+    // 段数と収納数はシミュレーション時に決めるため、レイアウトには持たせない
+    // (1列=1ロケーション、収容数は無制限=0)
+    onApply({
+      object: { ...object, name, widthM, depthM },
+      spec: { ...spec, levels: 1, capacityPerLocation: 0 },
+    });
   };
 
   return (
     <div className="modal-backdrop" onMouseDown={onCancel}>
       <div className="modal wide" onMouseDown={(e) => e.stopPropagation()}>
         <h2>{isNew ? 'ラックを配置' : 'ラック設定'}</h2>
-        <p className="muted">サイズと列数・段数を入力すると、ロケーション番号が自動生成されます。</p>
+        <p className="muted">
+          サイズと列数を入力すると、ロケーション番号が自動生成されます。
+          段数と1ラックの入り本数は、シミュレーション設定の「段数の割合」「入り本数の割合」で決まります。
+        </p>
 
         <div className="modal-columns">
           <div>
@@ -79,7 +91,7 @@ function RackDialogInner({ object, isNew, onCancel, onApply }: InnerProps): JSX.
               </label>
             </div>
 
-            <div className="step-label">2. 列数・段数</div>
+            <div className="step-label">2. 列数</div>
             <div className="field-grid">
               <label className="field">
                 <span>列数（間口）</span>
@@ -92,25 +104,6 @@ function RackDialogInner({ object, isNew, onCancel, onApply }: InnerProps): JSX.
                 />
               </label>
               <label className="field">
-                <span>段数</span>
-                <input
-                  type="number"
-                  min={1}
-                  max={20}
-                  value={spec.levels}
-                  onChange={(e) => setSpec((s) => ({ ...s, levels: Math.max(1, Number(e.target.value)) }))}
-                />
-              </label>
-              <label className="field">
-                <span>1ロケーションの最大収納数</span>
-                <input
-                  type="number"
-                  min={1}
-                  value={spec.capacityPerLocation}
-                  onChange={(e) => setSpec((s) => ({ ...s, capacityPerLocation: Math.max(1, Number(e.target.value)) }))}
-                />
-              </label>
-              <label className="field">
                 <span>ピッキング面</span>
                 <select value={spec.face} onChange={(e) => setSpec((s) => ({ ...s, face: e.target.value as RackFace }))}>
                   <option value="front">手前側（通路が上）</option>
@@ -119,6 +112,10 @@ function RackDialogInner({ object, isNew, onCancel, onApply }: InnerProps): JSX.
                 </select>
               </label>
             </div>
+            <p className="muted small">
+              段数と1ラックの入り本数はここでは決めません。
+              シミュレーションパネルの「段数の割合」「入り本数の割合」で指定します。
+            </p>
           </div>
 
           <div>
@@ -215,9 +212,10 @@ function RackDialogInner({ object, isNew, onCancel, onApply }: InnerProps): JSX.
             <div className="step-label">4. 生成されるロケーション</div>
             <div className="preview-box">
               <div className="preview-count">
-                {spec.columns} 列 × {spec.levels} 段 = <strong>{total}</strong> ロケーション
-                <span className="muted small">（間口 {bayWidth.toFixed(2)}m / 総収納数 {total * spec.capacityPerLocation}）</span>
+                {spec.columns} 列 = <strong>{total}</strong> ロケーション
+                <span className="muted small">（間口 {bayWidth.toFixed(2)}m）</span>
               </div>
+              <div className="muted small">段数はシミュレーション時に割合から決まります。</div>
               <div className="preview-codes">
                 {preview.map((code) => (
                   <span key={code} className="code-chip">

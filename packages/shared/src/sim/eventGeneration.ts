@@ -1,8 +1,10 @@
 import { createId } from '../domain/ids.js';
 import { parseClock } from '../geometry/index.js';
 import { Random } from './random.js';
+import { drawFillUnits } from './mixes.js';
 import type { ID } from '../domain/ids.js';
 import type {
+  FillMixEntry,
   InboundGateConfig,
   OutboundGateConfig,
   ProductSize,
@@ -65,6 +67,11 @@ export interface GenerateOptions {
   endTime: string;
   /** 曜日 (0=日)。曜日別係数を使う場合に指定する。 */
   weekday?: number;
+  /**
+   * 入り本数の割合。1ラックに何本積むかを抽選する。
+   * 未指定・空なら商品サイズの1ラックあたり本数をそのまま使う。
+   */
+  fillMix?: readonly FillMixEntry[];
 }
 
 /** 時間帯を秒の範囲へ変換し、開始時刻を0秒とした相対値にする。 */
@@ -185,7 +192,12 @@ export function generateInboundJobs(
 
         // --- 1ラック分ずつ作業に切り出す ---
         while (remaining > 0) {
-          const units = Math.min(remaining, Math.max(1, size.unitsPerRack));
+          // 満載本数を基準に、入り本数の割合から1ラック分を決める
+          const rackCapacity = Math.max(1, size.unitsPerRack);
+          const units = Math.min(
+            remaining,
+            drawFillUnits(options.fillMix ?? [], rackCapacity, rackCapacity, random),
+          );
           remaining -= units;
           const category = chooseRackCategory(
             config.rackMix,

@@ -1,6 +1,16 @@
 import { useState } from 'react';
-import { SLOTTING_STRATEGY_LABEL, formatDurationJa } from '@ws/shared';
-import type { Bottleneck, SlottingStrategyKey } from '@ws/shared';
+import {
+  SLOTTING_STRATEGY_LABEL,
+  formatDurationJa,
+  validateFillMix,
+  validateLevelMix,
+} from '@ws/shared';
+import type {
+  Bottleneck,
+  FillMixEntry,
+  LevelMixEntry,
+  SlottingStrategyKey,
+} from '@ws/shared';
 import { useEditorStore } from '../store/editorStore';
 import { useSimulationStore } from '../store/simulationStore';
 
@@ -83,6 +93,9 @@ export function SimulationPanel(): JSX.Element {
           通路での追突回避（渋滞をシミュレーション）
         </label>
 
+        <LevelMixEditor />
+        <FillMixEditor />
+
         <div className="btn-row">
           <button type="button" className="primary" onClick={runToEnd} disabled={status === 'computing'}>
             {status === 'computing' ? `計算中… ${Math.round(progress * 100)}%` : '最後まで一括実行'}
@@ -103,6 +116,184 @@ export function SimulationPanel(): JSX.Element {
       {bottlenecks.length > 0 && <BottleneckBlock issues={bottlenecks} />}
       {status === 'finished' && <ComparisonBlock />}
     </>
+  );
+}
+
+/**
+ * 段数の割合。
+ * レイアウトでは列数だけを決めるため、段数はここで決める。
+ */
+function LevelMixEditor(): JSX.Element {
+  const mix = useSimulationStore((s) => s.config.levelMix ?? []);
+  const setConfig = useSimulationStore((s) => s.setConfig);
+  const errors = validateLevelMix(mix);
+
+  const update = (index: number, patch: Partial<LevelMixEntry>): void => {
+    setConfig({ levelMix: mix.map((m, i) => (i === index ? { ...m, ...patch } : m)) });
+  };
+  const add = (): void => {
+    const next = Math.max(0, ...mix.map((m) => m.levels)) + 1;
+    setConfig({ levelMix: [...mix, { levels: next, ratioPct: 0 }] });
+  };
+  const remove = (index: number): void => {
+    setConfig({ levelMix: mix.filter((_, i) => i !== index) });
+  };
+
+  const totalPct = mix.reduce((sum, m) => sum + m.ratioPct, 0);
+
+  return (
+    <div className="mix-editor">
+      <div className="mix-title">
+        段数の割合
+        <span className="muted small">合計 {totalPct.toFixed(0)}%</span>
+      </div>
+      <table className="mix-table">
+        <thead>
+          <tr>
+            <th>段数</th>
+            <th>割合 (%)</th>
+            <th aria-label="操作" />
+          </tr>
+        </thead>
+        <tbody>
+          {mix.map((entry, index) => (
+            <tr key={index}>
+              <td>
+                <input
+                  type="number"
+                  min={1}
+                  max={20}
+                  value={entry.levels}
+                  onChange={(e) => update(index, { levels: Math.max(1, Number(e.target.value)) })}
+                />
+              </td>
+              <td>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={5}
+                  value={entry.ratioPct}
+                  onChange={(e) => update(index, { ratioPct: Math.max(0, Number(e.target.value)) })}
+                />
+              </td>
+              <td>
+                <button type="button" className="link" onClick={() => remove(index)} title="削除">
+                  ×
+                </button>
+              </td>
+            </tr>
+          ))}
+          {mix.length === 0 && (
+            <tr>
+              <td colSpan={3} className="muted small">
+                未設定のときはラック定義の段数を使います
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+      <button type="button" className="link" onClick={add}>
+        ＋ 段数を追加
+      </button>
+      {errors.map((err) => (
+        <p key={err} className="warn small">
+          {err}
+        </p>
+      ))}
+    </div>
+  );
+}
+
+/**
+ * 入り本数の割合。
+ * 1ラックに何本積むかを満載に対する割合で指定する。
+ */
+function FillMixEditor(): JSX.Element {
+  const mix = useSimulationStore((s) => s.config.fillMix ?? []);
+  const setConfig = useSimulationStore((s) => s.setConfig);
+  const errors = validateFillMix(mix);
+
+  const update = (index: number, patch: Partial<FillMixEntry>): void => {
+    setConfig({ fillMix: mix.map((m, i) => (i === index ? { ...m, ...patch } : m)) });
+  };
+  const add = (): void => {
+    setConfig({ fillMix: [...mix, { fillPct: 50, ratioPct: 0 }] });
+  };
+  const remove = (index: number): void => {
+    setConfig({ fillMix: mix.filter((_, i) => i !== index) });
+  };
+
+  const totalPct = mix.reduce((sum, m) => sum + m.ratioPct, 0);
+
+  return (
+    <div className="mix-editor">
+      <div className="mix-title">
+        入り本数の割合
+        <span className="muted small">合計 {totalPct.toFixed(0)}%</span>
+      </div>
+      <table className="mix-table">
+        <thead>
+          <tr>
+            <th>入り本数</th>
+            <th>割合 (%)</th>
+            <th aria-label="操作" />
+          </tr>
+        </thead>
+        <tbody>
+          {mix.map((entry, index) => (
+            <tr key={index}>
+              <td>
+                <span className="mix-fill">
+                  <input
+                    type="number"
+                    min={1}
+                    max={100}
+                    step={5}
+                    value={entry.fillPct}
+                    onChange={(e) => update(index, { fillPct: Math.max(1, Number(e.target.value)) })}
+                  />
+                  <span className="muted small">% 積み</span>
+                </span>
+              </td>
+              <td>
+                <input
+                  type="number"
+                  min={0}
+                  max={100}
+                  step={5}
+                  value={entry.ratioPct}
+                  onChange={(e) => update(index, { ratioPct: Math.max(0, Number(e.target.value)) })}
+                />
+              </td>
+              <td>
+                <button type="button" className="link" onClick={() => remove(index)} title="削除">
+                  ×
+                </button>
+              </td>
+            </tr>
+          ))}
+          {mix.length === 0 && (
+            <tr>
+              <td colSpan={3} className="muted small">
+                未設定のときは商品サイズの1ラックあたり本数を使います
+              </td>
+            </tr>
+          )}
+        </tbody>
+      </table>
+      <button type="button" className="link" onClick={add}>
+        ＋ 入り本数を追加
+      </button>
+      <p className="muted small">
+        満載を100%として指定します。例: 満載16本のラックで 50% なら 8本。
+      </p>
+      {errors.map((err) => (
+        <p key={err} className="warn small">
+          {err}
+        </p>
+      ))}
+    </div>
   );
 }
 

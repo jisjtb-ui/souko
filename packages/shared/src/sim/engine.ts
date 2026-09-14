@@ -17,6 +17,7 @@ import { NavGrid } from './navGrid.js';
 import { findPath } from './astar.js';
 import { advanceAlongPath } from './travel.js';
 import { Random } from './random.js';
+import { applyLevelMix, drawFillUnits } from './mixes.js';
 import { generateEventPlan } from './eventGeneration.js';
 import {
   addUnits,
@@ -281,6 +282,11 @@ export class LogisticsSimulation {
   /** 走行・渋滞・作業の分布 (要件14) */
   private readonly heat: Heatmap;
 
+  /**
+   * 実際に使う保管位置。
+   * 段数の割合を適用した結果なので input.locations とは件数が異なる。
+   */
+  private readonly locations: Location[];
   private readonly locationsById = new Map<ID, Location>();
   private readonly racksById: ReturnType<typeof buildRackIndex>;
   private readonly rackTypeById = new Map<ID, RackType>();
@@ -359,7 +365,16 @@ export class LogisticsSimulation {
       shutters: input.shutters ?? [],
     });
 
-    for (const location of input.locations) {
+    // レイアウトで決めるのは列数だけ。段数はここで割合から抽選して用意する。
+    // 索引を作る前に差し替える必要があるため、他の初期化より先に行う。
+    this.locations = applyLevelMix(
+      input.locations,
+      input.objects,
+      input.config.levelMix ?? [],
+      this.random,
+    );
+
+    for (const location of this.locations) {
       this.locationsById.set(location.id, location);
       if (!location.blocked) this.freeLocationIds.add(location.id);
     }
@@ -462,6 +477,7 @@ export class LogisticsSimulation {
     const outboundGates = this.input.objects.filter(isOutboundGateObject);
     const plan = generateEventPlan(inboundGates, outboundGates, this.input.productSizes, {
       seed: this.input.config.seed,
+      fillMix: this.input.config.fillMix ?? [],
       startTime: this.input.config.startTime,
       endTime: this.input.config.endTime,
     });
@@ -477,7 +493,7 @@ export class LogisticsSimulation {
     const ratio = Math.max(0, Math.min(1, this.input.config.initialFillRatio));
     if (ratio <= 0) return;
 
-    const eligible = this.input.locations.filter((l) => !l.blocked);
+    const eligible = this.locations.filter((l) => !l.blocked);
     const target = Math.floor(eligible.length * ratio);
     const sizes = this.input.productSizes;
     if (sizes.length === 0) return;
@@ -506,7 +522,15 @@ export class LogisticsSimulation {
       );
       const size = candidates[index < 0 ? 0 : index]!;
 
-      const units = Math.min(rackType.maxUnits, size.unitsPerRack);
+      // 入り本数は割合から抽選する（未設定なら商品サイズの1ラックあたり本数）。
+      // 満載の基準は「そのサイズをこのラック種別に積める上限」。
+      const fullUnits = Math.min(rackType.maxUnits, size.unitsPerRack);
+      const units = drawFillUnits(
+        this.input.config.fillMix ?? [],
+        fullUnits,
+        fullUnits,
+        this.random,
+      );
       const unit = createRackUnit({
         rackType,
         productSizeId: size.id,
@@ -718,7 +742,7 @@ export class LogisticsSimulation {
 
     const candidate = findFreeLocation(
       {
-        locations: this.input.locations,
+        locations: this.locations,
         candidateIds: this.freeLocationIds,
         locationById: this.locationsById,
         occupancy: this.occupancy,
@@ -1642,12 +1666,17 @@ export class LogisticsSimulation {
     const totalTravel = this.vehicles.reduce((sum, v) => sum + v.travelledM, 0);
     const working = this.vehicles.reduce((sum, v) => sum + v.workingSeconds, 0);
     const waiting = this.vehicles.reduce((sum, v) => sum + v.waitingSeconds, 0);
-    const capacityTotal = this.input.locations.length;
+    const capacityTotal = this.locations.length;
     const used = this.occupancy.size;
     const storedUnits = [...this.occupancy.values()]
       .map((id) => this.rackUnits.get(id)?.currentUnits ?? 0)
       .reduce((a, b) => a + b, 0);
-    const totalCapacityUnits = this.input.locations.reduce((sum, l) => sum + l.capacity, 0);
+    const totalCapacityUnits = this.locations.reduce((sum, l) => sum + l.capacity, 0);
+    // レイアウトで収納数を決めない場合 (capacity=0) は、
+    // 実際に保管しているラックの満載本数を分母にして積載率を出す。
+    const storedCapacityUnits = [...this.occupancy.values()]
+      .map((id) => this.rackUnits.get(id)?.capacityUnits ?? 0)
+      .reduce((a, b) => a + b, 0);
 
     const emptyRacks = [...this.rackUnits.values()].filter((r) => r.status === 'empty').length;
     const stackedRacks = this.stacks.reduce((sum, s) => sum + s.rackUnitIds.length, 0);
@@ -1675,7 +1704,12 @@ export class LogisticsSimulation {
       emptyRacks,
       stackedRacks,
       locationUsageRatio: capacityTotal === 0 ? 0 : used / capacityTotal,
-      storageFillRatio: totalCapacityUnits === 0 ? 0 : storedUnits / totalCapacityUnits,
+      storageFillRatio:
+        totalCapacityUnits > 0
+          ? storedUnits / totalCapacityUnits
+          : storedCapacityUnits === 0
+            ? 0
+            : storedUnits / storedCapacityUnits,
       speedViolationSeconds: this.vehicles.reduce((sum, v) => sum + v.speedViolationSeconds, 0),
       gates: [...this.gates.values()].map((gate) => ({
         objectId: gate.objectId,

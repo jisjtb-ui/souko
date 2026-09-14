@@ -1474,3 +1474,62 @@ button.link {
     overflow: visible;
   }
 }
+
+/* ------------------------------------------- 割合の入力（段数 / 入り本数） */
+
+.mix-editor {
+  margin-top: 10px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.mix-title {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  margin-bottom: 4px;
+}
+
+.mix-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+}
+
+.mix-table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--muted);
+  font-size: 11px;
+  padding: 0 4px 2px 0;
+}
+
+.mix-table td {
+  padding: 1px 4px 1px 0;
+}
+
+.mix-table input[type='number'] {
+  width: 100%;
+  min-width: 52px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.mix-table td:last-child {
+  width: 20px;
+  text-align: center;
+}
+
+.mix-fill {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.warn.small {
+  font-size: 11px;
+  margin: 4px 0 0;
+}

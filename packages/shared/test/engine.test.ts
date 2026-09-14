@@ -31,9 +31,11 @@ describe('シミュレーションエンジン: 初期化', () => {
     expect(snap.gates.filter((g) => g.type === 'inbound')).toHaveLength(1);
     expect(snap.gates.filter((g) => g.type === 'outbound')).toHaveLength(3);
     expect(snap.stacks.length).toBe(12); // 6列 x 2行
-    // 初期充填率50% -> 216ロケーションのおよそ半分
-    expect(snap.occupancy.size).toBeGreaterThan(90);
-    expect(snap.occupancy.size).toBeLessThan(120);
+    // 初期充填率50% -> 保管位置のおよそ半分。
+    // 保管位置の数は段数の割合から決まるため、実数に対して比率で確認する。
+    expect(snap.occupancy.size).toBeGreaterThan(0);
+    expect(sim.kpi().locationUsageRatio).toBeGreaterThan(0.4);
+    expect(sim.kpi().locationUsageRatio).toBeLessThan(0.6);
     expect(snap.clock).toBe('08:00:00');
   });
 

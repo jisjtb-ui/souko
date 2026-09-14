@@ -105,6 +105,35 @@ export interface RackMixSetting {
   largePct: number;
 }
 
+/**
+ * 段数の割合。
+ *
+ * 段数はレイアウトではなくシミュレーション時に決める。
+ * 「3段のラックが40%、4段が45%、5段が15%」のように指定すると、
+ * 保管ラック1本ごとに段数を抽選して保管位置を用意する。
+ * 空にすると、従来どおりラック定義の段数を使う。
+ */
+export interface LevelMixEntry {
+  /** 段数 */
+  levels: number;
+  /** この段数になるラックの割合 (%) */
+  ratioPct: number;
+}
+
+/**
+ * 入り本数の割合。
+ *
+ * 1ラックに何本入っているかをシミュレーション時に決める。
+ * 満載に対する割合で指定する（100 = 満載）。
+ * 空にすると、従来どおり商品サイズの1ラックあたり本数を使う。
+ */
+export interface FillMixEntry {
+  /** 満載に対する割合 (%)。100 なら満載 */
+  fillPct: number;
+  /** この入り本数になるラックの割合 (%) */
+  ratioPct: number;
+}
+
 /** サイズ別の搬入割合。 */
 export interface SizeMixEntry {
   productSizeId: ID;
@@ -292,6 +321,16 @@ export interface LogisticsSimConfig {
   seed: number;
   /** 開始時点の在庫充填率 (0-1)。出庫できる在庫を用意する。 */
   initialFillRatio: number;
+  /**
+   * 段数の割合。保管ラック1本ごとに段数を抽選する。
+   * 空配列なら、ラック定義に保存されている段数をそのまま使う。
+   */
+  levelMix: LevelMixEntry[];
+  /**
+   * 入り本数の割合。可搬ラック1台ごとに積載本数を抽選する。
+   * 空配列なら、商品サイズの1ラックあたり本数をそのまま使う。
+   */
+  fillMix: FillMixEntry[];
   /** フォークリフトの荷役時間 (秒) */
   handlingSeconds: number;
   /** 通路での追突回避を行うか */
@@ -308,6 +347,10 @@ export const DEFAULT_SIM_CONFIG: LogisticsSimConfig = {
   slottingStrategy: 'balanced',
   seed: 20240101,
   initialFillRatio: 0.5,
+  // 既定は「3段・満載のみ」。従来と同じ結果になる出発点にしておき、
+  // ばらつきを見たいときにユーザーが行を足して割合を変える。
+  levelMix: [{ levels: 3, ratioPct: 100 }],
+  fillMix: [{ fillPct: 100, ratioPct: 100 }],
   handlingSeconds: 20,
   collisionAvoidance: true,
 };
@@ -329,6 +372,42 @@ export function validateRatioTotal(
 
 export function validateRackMix(mix: RackMixSetting, label = '使用ラックサイズ割合'): string[] {
   return validateRatioTotal([mix.smallPct, mix.largePct], label);
+}
+
+/** 段数の割合。未設定（空）は「ラック定義の段数を使う」意味なので許容する。 */
+export function validateLevelMix(mix: readonly LevelMixEntry[]): string[] {
+  if (mix.length === 0) return [];
+  const errors: string[] = [];
+  for (const entry of mix) {
+    if (!Number.isInteger(entry.levels) || entry.levels < 1) {
+      errors.push(`段数は1以上の整数にしてください（${entry.levels}）`);
+    }
+    if (entry.ratioPct < 0) errors.push('段数の割合に負の値は指定できません');
+  }
+  const seen = new Set<number>();
+  for (const entry of mix) {
+    if (seen.has(entry.levels)) errors.push(`段数 ${entry.levels} が重複しています`);
+    seen.add(entry.levels);
+  }
+  return errors.concat(validateRatioTotal(mix.map((m) => m.ratioPct), '段数の割合'));
+}
+
+/** 入り本数の割合。未設定（空）は「商品サイズの本数を使う」意味なので許容する。 */
+export function validateFillMix(mix: readonly FillMixEntry[]): string[] {
+  if (mix.length === 0) return [];
+  const errors: string[] = [];
+  for (const entry of mix) {
+    if (entry.fillPct <= 0 || entry.fillPct > 100) {
+      errors.push(`入り本数の割合は1〜100%で指定してください（${entry.fillPct}）`);
+    }
+    if (entry.ratioPct < 0) errors.push('入り本数の割合に負の値は指定できません');
+  }
+  const seen = new Set<number>();
+  for (const entry of mix) {
+    if (seen.has(entry.fillPct)) errors.push(`入り本数 ${entry.fillPct}% が重複しています`);
+    seen.add(entry.fillPct);
+  }
+  return errors.concat(validateRatioTotal(mix.map((m) => m.ratioPct), '入り本数の割合'));
 }
 
 export function validateInboundGateConfig(config: InboundGateConfig): string[] {

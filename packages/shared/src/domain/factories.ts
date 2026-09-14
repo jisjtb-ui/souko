@@ -63,9 +63,11 @@ export type RackSpecInput = Partial<Omit<RackSpec, 'naming'>> & { naming?: Parti
 export function createRackSpec(overrides: RackSpecInput = {}): RackSpec {
   const { naming, ...rest } = overrides;
   return {
-    levels: 3,
+    // 段数と1ロケーションの収納数はシミュレーション時に決めるため、
+    // レイアウトとしては「1列=1ロケーション・収容制限なし」を既定にする
+    levels: 1,
     columns: 8,
-    capacityPerLocation: 100,
+    capacityPerLocation: 0,
     face: 'front',
     ...rest,
     naming: createNamingRule(naming?.area ?? 'A', naming ?? {}),
