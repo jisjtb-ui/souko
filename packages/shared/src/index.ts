@@ -9,6 +9,7 @@ export * from './domain/ids.js';
 export * from './domain/types.js';
 export * from './domain/objectSpecs.js';
 export * from './domain/locations.js';
+export * from './domain/locationGroups.js';
 export * from './domain/areas.js';
 export * from './domain/logistics.js';
 export * from './domain/logisticsFactories.js';

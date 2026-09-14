@@ -14,7 +14,11 @@ import {
   createNamingRule,
   findDuplicateCodes,
   findPath,
+  applyRackType,
+  createLocationGroup,
+  generateLocationGroup as generateLocationGroupBlocks,
   generateLocationsForRack,
+  validateLocationGroup,
   getObjectSpec,
   ensureDefaultArea,
   findAreaAt,
@@ -37,6 +41,7 @@ import type {
   LayoutObjectKind,
   LayoutSnapshot,
   Location,
+  LocationGroup,
   Path,
   ProductSize,
   RackObject,
@@ -187,6 +192,14 @@ export interface EditorState {
   duplicateSelected: () => void;
   rotateSelected: (deg: number) => void;
   nudgeSelected: (dx: number, dy: number) => void;
+
+  /** ロケーション自動生成（縦列数 × 横ブロック数） */
+  generateLocationGroup: (group: LocationGroup) => void;
+  /** 生成ダイアログの開閉 */
+  locationGroupDraft: LocationGroup | null;
+  openLocationGroupDraft: () => void;
+  closeLocationGroupDraft: () => void;
+  setLocationGroupDraft: (patch: Partial<LocationGroup>) => void;
 
   openRackDraft: (rack: RackObject, isNew: boolean) => void;
   cancelRackDraft: () => void;
@@ -804,6 +817,69 @@ export const useEditorStore = create<EditorState>((set, get) => ({
       const obj = get().objects.find((o) => o.id === id);
       if (obj && isRackObject(obj)) get().regenerateRackLocations(id);
     }
+  },
+
+  locationGroupDraft: null,
+
+  openLocationGroupDraft: () => {
+    const { warehouse, layout, rackTypes, objects } = get();
+    if (!warehouse || !layout) return;
+    const rackType = rackTypes[0];
+    if (!rackType) {
+      get().log('ラック種別マスタが未登録です。「マスタ設定」から登録してください', 'warn');
+      return;
+    }
+    // 既存の住所と重ならない開始番号を用意する
+    const used = new Set(
+      objects
+        .filter(isRackObject)
+        .map((o) => o.rack.block?.locationCode?.replace(/-\d+$/, ''))
+        .filter((v): v is string => Boolean(v)),
+    );
+    let start = 1;
+    while (used.has(String(start).padStart(3, '0'))) start += 1;
+
+    set({
+      locationGroupDraft: applyRackType(
+        createLocationGroup({
+          warehouseId: warehouse.id,
+          layoutId: layout.id,
+          startNumber: String(start).padStart(3, '0'),
+          rackTypeId: rackType.id,
+          verticalColumns: 3,
+          horizontalBlocks: 23,
+        }),
+        rackType,
+      ),
+      placingKind: null,
+    });
+  },
+
+  closeLocationGroupDraft: () => set({ locationGroupDraft: null }),
+
+  setLocationGroupDraft: (patch) =>
+    set((s) => (s.locationGroupDraft ? { locationGroupDraft: { ...s.locationGroupDraft, ...patch } } : {})),
+
+  generateLocationGroup: (group) => {
+    const errors = validateLocationGroup(group);
+    if (errors.length > 0) {
+      get().log(errors[0]!, 'warn');
+      return;
+    }
+    const generated = generateLocationGroupBlocks(group);
+    get()._pushHistory();
+    set((s) => ({
+      objects: [...s.objects, ...generated.objects],
+      locations: [...s.locations, ...generated.locations],
+      selectedIds: generated.objects.map((o) => o.id),
+      locationGroupDraft: null,
+      dirty: true,
+    }));
+    const { stats } = generated;
+    get().log(
+      `ロケーション「${group.startNumber}-1 〜 ${group.startNumber}-${stats.horizontalBlocks}」を生成しました` +
+        `（${stats.totalPhysicalColumns}列生成・${stats.locationCount}ロケーション / 推定容量 ${stats.totalUnits.toLocaleString()}本）`,
+    );
   },
 
   openRackDraft: (rack, isNew) => set({ rackDraft: { object: rack, isNew } }),

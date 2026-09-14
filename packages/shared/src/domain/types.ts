@@ -133,6 +133,23 @@ export interface LocationNamingRule {
 /** ラックのピッキング面 (どちら側の通路から作業するか)。ラックのローカル座標基準。 */
 export type RackFace = 'front' | 'back' | 'both';
 
+/**
+ * 自動生成されたロケーション住所であることを示す情報。
+ *
+ * 住所 "001-1" は「縦の物理列をまとめた1つの保管場所」であり、
+ * 物理列そのもの (RackSpec.columns) とは別の概念 として扱う。
+ */
+export interface LocationBlockRef {
+  /** 生成元のロケーショングループ */
+  groupId: ID;
+  /** ロケーション住所 ("001-1") */
+  locationCode: string;
+  /** 横方向の位置 (1始まり) */
+  blockIndex: number;
+  /** この住所には1つの商品サイズだけを入れる */
+  singleSize: boolean;
+}
+
 export interface RackSpec {
   /** 段数 */
   levels: number;
@@ -154,6 +171,17 @@ export interface RackSpec {
   rackCategory?: RackCategory;
   /** 優先保管エリアのタグ (商品サイズの preferredAreaTag と突き合わせる) */
   areaTag?: string;
+  /**
+   * 縦列をどちらの向きに並べるか。
+   *   'width' … ラックの横幅を列数で割る（既定・従来どおり）
+   *   'depth' … ラックの奥行方向に列を重ねる（自動生成したロケーションブロック）
+   */
+  columnAxis?: 'width' | 'depth';
+  /**
+   * 自動生成されたロケーション住所である場合の情報。
+   * 住所 "001-1" と、その中の物理列を分けて扱うために使う。
+   */
+  block?: LocationBlockRef;
   /**
    * 奥行きレーン数。1レーン (= 1列) に何本分の深さがあるか。
    *

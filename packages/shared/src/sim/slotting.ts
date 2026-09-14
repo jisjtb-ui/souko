@@ -70,6 +70,18 @@ export function laneKey(rackId: ID, column: number): string {
   return `${rackId}|${column}`;
 }
 
+/**
+ * 「同じサイズしか入れられない単位」のキー。
+ *
+ * 自動生成したロケーション住所 (001-1 など) は、縦の物理列をまとめて
+ * 1つの保管場所として扱うため、住所まるごとが1サイズになる。
+ * それ以外のラックは従来どおり1列ごと。
+ */
+export function storageLaneKey(rack: RackObject, location: Location): string {
+  if (rack.rack.block?.singleSize) return `block|${rack.id}`;
+  return laneKey(location.rackId, location.column);
+}
+
 export interface SlottingCandidate {
   location: Location;
   /** 小さいほど良い */
@@ -99,9 +111,9 @@ export function isLocationEligible(ctx: SlottingContext, location: Location): bo
   // ロケーションの収納可能数が足りているか
   if (location.capacity > 0 && location.capacity < ctx.rackType.maxUnits) return false;
 
-  // 縦列には1サイズのみ
+  // 縦列(自動生成ブロックならロケーション住所)には1サイズのみ
   if (ctx.oneSizePerLane && ctx.laneSizeOf) {
-    const current = ctx.laneSizeOf.get(laneKey(location.rackId, location.column));
+    const current = ctx.laneSizeOf.get(storageLaneKey(rack, location));
     if (current !== undefined && current !== ctx.size.id) return false;
   }
 

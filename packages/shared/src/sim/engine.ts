@@ -18,7 +18,7 @@ import { findPath } from './astar.js';
 import { advanceAlongPath } from './travel.js';
 import { Random } from './random.js';
 import { applyLevelMix, drawFillUnits } from './mixes.js';
-import { laneKey } from './slotting.js';
+import { storageLaneKey } from './slotting.js';
 import { generateEventPlan } from './eventGeneration.js';
 import {
   addUnits,
@@ -1563,8 +1563,9 @@ export class LogisticsSimulation {
       set.add(locationId);
 
       const location = this.locationsById.get(locationId);
-      if (location) {
-        const key = laneKey(location.rackId, location.column);
+      const rackObject = location ? this.racksById.get(location.rackId) : undefined;
+      if (location && rackObject) {
+        const key = storageLaneKey(rackObject, location);
         const lane = this.laneSizes.get(key);
         if (lane && lane.sizeId === rack.productSizeId) {
           lane.count += 1;
@@ -1598,8 +1599,9 @@ export class LogisticsSimulation {
       this.storedBySize.get(rack.productSizeId)?.delete(locationId);
 
       const location = this.locationsById.get(locationId);
-      if (location) {
-        const key = laneKey(location.rackId, location.column);
+      const rackObject = location ? this.racksById.get(location.rackId) : undefined;
+      if (location && rackObject) {
+        const key = storageLaneKey(rackObject, location);
         const lane = this.laneSizes.get(key);
         if (lane && lane.sizeId === rack.productSizeId) {
           lane.count -= 1;

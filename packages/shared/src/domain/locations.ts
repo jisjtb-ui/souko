@@ -65,7 +65,10 @@ export function generateLocationsForRack(
 ): Location[] {
   const { columns, levels, naming, capacityPerLocation, category, face } = rack.rack;
   const offset = options.approachOffsetM ?? DEFAULT_APPROACH_OFFSET_M;
-  const bayWidth = rack.widthM / Math.max(1, columns);
+  // 縦列を奥行方向に重ねる場合は、奥行を列数で割る（自動生成したロケーションブロック）
+  const alongDepth = rack.rack.columnAxis === 'depth';
+  const bayWidth = alongDepth ? rack.widthM : rack.widthM / Math.max(1, columns);
+  const bayDepth = alongDepth ? rack.depthM / Math.max(1, columns) : rack.depthM;
   const locations: Location[] = [];
   let index = 0;
 
@@ -80,10 +83,14 @@ export function generateLocationsForRack(
           : naming.levelStart + (levels - 1 - l);
       index += 1;
 
-      const localCenter = { x: bayWidth * (c + 0.5), y: rack.depthM / 2 };
+      const localCenter = alongDepth
+        ? { x: rack.widthM / 2, y: bayDepth * (c + 0.5) }
+        : { x: bayWidth * (c + 0.5), y: rack.depthM / 2 };
       const world = localToWorld(rack, localCenter);
 
-      // ピッキング面: front = ローカル -Y 側, back = ローカル +Y 側
+      // ピッキング面: front = ローカル -Y 側, back = ローカル +Y 側。
+      // 奥行方向に列を重ねる場合、奥の列も手前の通路から作業するため
+      // 停車位置はブロックの面で共通にする。
       const approachLocal =
         face === 'back'
           ? { x: localCenter.x, y: rack.depthM + offset }
@@ -109,7 +116,7 @@ export function generateLocationsForRack(
         approachX: round(approachWorld.x),
         approachY: round(approachWorld.y),
         widthM: round(bayWidth),
-        depthM: rack.depthM,
+        depthM: round(bayDepth),
         capacity: capacityPerLocation,
         ...(category ? { category } : {}),
       });

@@ -1543,3 +1543,47 @@ button.link {
   font-weight: normal;
   opacity: 0.75;
 }
+
+/* ------------------------------------------ ロケーション住所のステータス */
+
+.loc-status {
+  margin-left: 8px;
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 10px;
+  font-weight: normal;
+}
+
+.loc-status-empty {
+  background: #eef1f5;
+  color: var(--muted);
+}
+
+.loc-status-stored {
+  background: #e7f0fd;
+  color: #1a56a8;
+}
+
+.loc-status-full {
+  background: #fdecea;
+  color: #a82b2b;
+}
+
+.loc-status-inbound {
+  background: #eaf6e8;
+  color: #2f7a2f;
+}
+
+.loc-status-outbound {
+  background: #fff4e0;
+  color: #96620d;
+}
+
+.tool.wide {
+  flex: 1 1 100%;
+}
+
+.preview-table th {
+  white-space: nowrap;
+  width: 40%;
+}

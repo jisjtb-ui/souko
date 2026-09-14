@@ -44,8 +44,11 @@ function ObjectShapeBase({
   // ラックの内側はロケーション表示に使うため、名前は枠の外に出す。
   // 細長い・幅の狭いオブジェクトも文字が潰れるので同様に外へ出す。
   // (全角前提で1文字あたり fontSize 分の幅を見込む)
+  // 自動生成したロケーション住所は枠の中央に出す（どの住所かがすぐ分かるように）
+  const isLocationBlock = isRackObject(object) && Boolean(object.rack.block);
   const labelOutside =
-    isRackObject(object) || object.depthM * scale < 18 || object.name.length * fontSize > object.widthM;
+    !isLocationBlock &&
+    (isRackObject(object) || object.depthM * scale < 18 || object.name.length * fontSize > object.widthM);
   // 背中合わせのラックは上に出すと相手のラックに重なるため、通路側(下)へ出す
   const labelBelow = labelOutside && isRackObject(object) && object.rack.face === 'back';
 
@@ -87,11 +90,20 @@ function ObjectShapeBase({
       {showLabel && (
         <Text
           x={labelOutside ? 0 : 0.2}
-          y={labelBelow ? object.depthM + fontSize * 0.3 : labelOutside ? -fontSize * 1.3 : 0.15}
+          y={
+            isLocationBlock
+              ? object.depthM / 2 - fontSize * 0.6
+              : labelBelow
+                ? object.depthM + fontSize * 0.3
+                : labelOutside
+                  ? -fontSize * 1.3
+                  : 0.15
+          }
           width={labelOutside ? Math.max(object.widthM, 8) : Math.max(object.widthM - 0.4, 1)}
           text={object.name}
           fontSize={fontSize}
           fill={labelOutside ? '#55606c' : '#2b333b'}
+          align={isLocationBlock ? 'center' : 'left'}
           listening={false}
           ellipsis={!labelOutside}
           wrap="none"
@@ -117,11 +129,15 @@ function RackDetail({
   object,
   scale,
 }: {
-  object: LayoutObject & { rack: { columns: number; face: string } };
+  object: LayoutObject & { rack: { columns: number; face: string; columnAxis?: 'width' | 'depth' } };
   scale: number;
 }): JSX.Element {
   const { columns, face } = object.rack;
-  const bay = object.widthM / Math.max(1, columns);
+  // 自動生成したロケーションブロックは、縦列を奥行方向に重ねている
+  const alongDepth = object.rack.columnAxis === 'depth';
+  const bay = alongDepth
+    ? object.depthM / Math.max(1, columns)
+    : object.widthM / Math.max(1, columns);
   const hairline = 0.8 / scale;
   const faceY = face === 'back' ? object.depthM : 0;
 
@@ -130,12 +146,17 @@ function RackDetail({
       listening={false}
       perfectDrawEnabled={false}
       sceneFunc={(ctx) => {
-        // 間口の区切り
+        // 物理列の区切り
         if (columns > 1) {
           ctx.beginPath();
           for (let i = 1; i < columns; i++) {
-            ctx.moveTo(bay * i, 0);
-            ctx.lineTo(bay * i, object.depthM);
+            if (alongDepth) {
+              ctx.moveTo(0, bay * i);
+              ctx.lineTo(object.widthM, bay * i);
+            } else {
+              ctx.moveTo(bay * i, 0);
+              ctx.lineTo(bay * i, object.depthM);
+            }
           }
           ctx.setAttr('strokeStyle', '#7b8fab');
           ctx.setAttr('lineWidth', hairline);

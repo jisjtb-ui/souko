@@ -5,6 +5,7 @@ import { Inspector } from './components/Inspector';
 import { RackDialog } from './components/RackDialog';
 import { Toolbar } from './components/Toolbar';
 import { TopBar } from './components/TopBar';
+import { LocationGroupDialog } from './components/LocationGroupDialog';
 import { MasterDialog } from './components/MasterDialog';
 import { WarehouseDialog } from './components/WarehouseDialog';
 import { DeadPositionPage } from './pages/DeadPositionPage';
@@ -133,6 +134,7 @@ export default function App(): JSX.Element {
       )}
 
       <RackDialog />
+      <LocationGroupDialog />
       {settingsOpen && <WarehouseDialog onClose={() => setSettingsOpen(false)} />}
       {mastersOpen && <MasterDialog onClose={() => setMastersOpen(false)} />}
     </div>

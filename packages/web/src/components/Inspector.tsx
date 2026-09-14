@@ -1,13 +1,15 @@
 import { useMemo } from 'react';
 import {
+  LOCATION_ADDRESS_STATUS_LABEL,
   getObjectSpec,
   isEmptyRackYardObject,
   isForkliftObject,
   isInboundGateObject,
   isOutboundGateObject,
   isRackObject,
+  summarizeLocationAddresses,
 } from '@ws/shared';
-import type { LayoutObject } from '@ws/shared';
+import type { LayoutObject, Location, RackObject } from '@ws/shared';
 import {
   computeAreaStatsList,
   computeStats,
@@ -21,6 +23,7 @@ import { AreaInspector, ConnectionInspector } from './AreaInspector';
 import { SimulationPanel } from './SimulationPanel';
 import { EmptyRackYardInspector, InboundGateInspector, OutboundGateInspector } from './GateInspector';
 import { api } from '../api/client';
+import { useSimulationStore } from '../store/simulationStore';
 
 /** 右サイドの情報パネル: 選択中オブジェクトの詳細と倉庫サマリー。 */
 export function Inspector(): JSX.Element {
@@ -241,6 +244,83 @@ function GateWrapper({ object, children }: { object: LayoutObject; children: Rea
   );
 }
 
+/**
+ * 自動生成したロケーション住所 (001-1 など) の内訳。
+ *
+ * 「住所」と「物理列 × 段」を分けて見せる。
+ * 在庫はシミュレーション結果があればそれを反映し、無ければ「空」。
+ */
+function LocationAddressBlock({
+  object,
+  locations,
+}: {
+  object: RackObject;
+  locations: readonly Location[];
+}): JSX.Element {
+  const snapshot = useSimulationStore((s) => s.snapshot);
+  const productSizes = useEditorStore((s) => s.productSizes);
+
+  const view = useMemo(() => {
+    const inventory = snapshot
+      ? {
+          occupancy: snapshot.occupancy,
+          rackUnits: new Map(snapshot.rackUnits.map((u) => [u.id, u])),
+        }
+      : undefined;
+    return summarizeLocationAddresses([object], locations, inventory)[0];
+  }, [object, locations, snapshot]);
+
+  if (!view) return <></>;
+
+  const sizeLabel = view.productSizeIds
+    .map((id) => productSizes.find((p) => p.id === id)?.code ?? id)
+    .join(' / ');
+
+  return (
+    <div className="sub-block">
+      <div className="sub-title">
+        ロケーション {view.locationCode}
+        <span className={`loc-status loc-status-${view.status}`}>
+          {LOCATION_ADDRESS_STATUS_LABEL[view.status]}
+        </span>
+      </div>
+      <dl className="stat-grid compact">
+        <div>
+          <dt>内部構造</dt>
+          <dd>
+            {view.columns} 列 × {view.levels} 段 = {view.slots.length} 箇所
+          </dd>
+        </div>
+        <div>
+          <dt>最大容量</dt>
+          <dd>{view.capacity.toLocaleString()} 本</dd>
+        </div>
+        <div>
+          <dt>現在在庫</dt>
+          <dd>{view.currentQuantity.toLocaleString()} 本</dd>
+        </div>
+        <div>
+          <dt>空き容量</dt>
+          <dd>{view.freeCapacity.toLocaleString()} 本</dd>
+        </div>
+        <div>
+          <dt>使用率</dt>
+          <dd>{(view.usageRatio * 100).toFixed(1)}%</dd>
+        </div>
+        <div>
+          <dt>商品サイズ</dt>
+          <dd>{sizeLabel || '—'}</dd>
+        </div>
+      </dl>
+      <p className="muted small">
+        {object.rack.block?.singleSize
+          ? 'この住所には1つの商品サイズだけを入れます（縦列すべて同じサイズ）。'
+          : 'この住所には複数の商品サイズを入れられます。'}
+      </p>
+    </div>
+  );
+}
+
 function GenericObjectInspector({ object }: { object: LayoutObject }): JSX.Element {
   const spec = getObjectSpec(object.kind);
   const updateObject = useEditorStore((s) => s.updateObject);
@@ -309,6 +389,10 @@ function GenericObjectInspector({ object }: { object: LayoutObject }): JSX.Eleme
           削除 (Del)
         </button>
       </div>
+
+      {isRackObject(object) && object.rack.block && (
+        <LocationAddressBlock object={object} locations={rackLocations} />
+      )}
 
       {isRackObject(object) && (
         <div className="sub-block">

@@ -1,4 +1,5 @@
-import { HEATMAP_LAYERS, HEATMAP_LAYER_META, OBJECT_SPEC_LIST } from '@ws/shared';
+import { useMemo } from 'react';
+import { HEATMAP_LAYERS, HEATMAP_LAYER_META, OBJECT_SPEC_LIST, isRackObject } from '@ws/shared';
 import type { HeatmapLayerKey, LayoutObjectKind } from '@ws/shared';
 import { useEditorStore } from '../store/editorStore';
 import { useSimulationStore } from '../store/simulationStore';
@@ -76,6 +77,19 @@ export function Toolbar(): JSX.Element {
   const cancelPolygonArea = useEditorStore((s) => s.cancelPolygonArea);
   const areaCount = useEditorStore((s) => s.areas.length);
   const connectionCount = useEditorStore((s) => s.connections.length);
+  const openLocationGroupDraft = useEditorStore((s) => s.openLocationGroupDraft);
+  const objects = useEditorStore((s) => s.objects);
+  // 自動生成したロケーション住所の数と、その物理列の総数
+  const { locationBlockCount, physicalColumnCount } = useMemo(() => {
+    let blocks = 0;
+    let columns = 0;
+    for (const object of objects) {
+      if (!isRackObject(object) || !object.rack.block) continue;
+      blocks += 1;
+      columns += object.rack.columns;
+    }
+    return { locationBlockCount: blocks, physicalColumnCount: columns };
+  }, [objects]);
 
   const pick = (kind: LayoutObjectKind): void => {
     setPlacingKind(placingKind === kind ? null : kind);
@@ -95,6 +109,25 @@ export function Toolbar(): JSX.Element {
           <button type="button" className={tool === 'route' ? 'tool active' : 'tool'} onClick={() => setTool('route')}>
             ➜ 経路確認
           </button>
+        </div>
+      </div>
+
+      <div className="panel-block">
+        <div className="panel-title">ロケーション</div>
+        <div className="tool-row">
+          <button
+            type="button"
+            className="tool wide"
+            onClick={openLocationGroupDraft}
+            title="縦列数 × 横ブロック数を入力して、フリーロケーション用の収納スペースをまとめて作ります"
+          >
+            ▦ ロケーションを自動生成
+          </button>
+        </div>
+        <div className="muted small">
+          {locationBlockCount > 0
+            ? `${locationBlockCount} ロケーション（${physicalColumnCount} 列）`
+            : '縦列数 × 横ブロック数で一括生成できます'}
         </div>
       </div>
 
