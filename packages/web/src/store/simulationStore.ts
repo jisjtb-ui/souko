@@ -27,7 +27,9 @@ export interface SavedRun {
 
 interface SimulationState {
   config: LogisticsSimConfig;
-  status: 'idle' | 'running' | 'paused' | 'finished';
+  status: 'idle' | 'running' | 'paused' | 'computing' | 'finished';
+  /** 一括実行の進捗 (0-1) */
+  progress: number;
   speed: number;
   snapshot: SimulationSnapshot | null;
   bottlenecks: Bottleneck[];
@@ -77,6 +79,7 @@ function plannedSeconds(config: LogisticsSimConfig): number {
 export const useSimulationStore = create<SimulationState>((set, get) => ({
   config: { ...DEFAULT_SIM_CONFIG },
   status: 'idle',
+  progress: 0,
   speed: 10,
   snapshot: null,
   bottlenecks: [],
@@ -129,7 +132,8 @@ export const useSimulationStore = create<SimulationState>((set, get) => ({
         simulation.step(tick);
         remaining -= tick;
         guard++;
-        if (simulation.snapshot().finished) break;
+        // スナップショットの生成は1フレームに1回で足りる（tickごとに作ると重い）
+        if (simulation.isFinished) break;
       }
 
       const snapshot = simulation.snapshot();
@@ -164,7 +168,7 @@ export const useSimulationStore = create<SimulationState>((set, get) => ({
     if (rafHandle !== null) cancelAnimationFrame(rafHandle);
     rafHandle = null;
     simulation = null;
-    set({ status: 'idle', snapshot: null, bottlenecks: [], comparison: null });
+    set({ status: 'idle', progress: 0, snapshot: null, bottlenecks: [], comparison: null });
   },
 
   runToEnd: () => {
@@ -177,13 +181,45 @@ export const useSimulationStore = create<SimulationState>((set, get) => ({
       set({ error: '倉庫が読み込まれていません' });
       return;
     }
+
+    let instance: LogisticsSimulation;
     try {
-      simulation = new LogisticsSimulation(input);
-      const snapshot = simulation.runToEnd();
+      instance = new LogisticsSimulation(input);
+    } catch (error) {
+      set({ error: (error as Error).message });
+      return;
+    }
+    simulation = instance;
+
+    const tick = state.config.tickSeconds;
+    set({ status: 'computing', progress: 0, error: null, snapshot: null, bottlenecks: [] });
+
+    /*
+     * 1日分の計算はデータ量によっては数秒〜十数秒かかる。
+     * 一度に回すと画面が固まるため、1フレームあたりの実行時間を区切り、
+     * 残りは次のフレームへ譲る（計算内容・結果は分割しても同じ）。
+     */
+    const SLICE_MS = 12;
+    const runSlice = (): void => {
+      if (get().status !== 'computing' || simulation !== instance) {
+        rafHandle = null;
+        return;
+      }
+      // エンジン側の終了条件（打ち切り時間・ガード）を共有するので、
+      // 分割して実行しても一気に実行しても結果は同じになる
+      const done = instance.runFor(SLICE_MS, { tickSeconds: tick });
+
+      if (!done) {
+        set({ progress: instance.progressRatio() });
+        rafHandle = requestAnimationFrame(runSlice);
+        return;
+      }
+
+      const snapshot = instance.snapshot();
       set({
         snapshot,
         status: 'finished',
-        error: null,
+        progress: 1,
         bottlenecks: analyzeBottlenecks({
           snapshot,
           rackTypes: useEditorStore.getState().rackTypes,
@@ -192,9 +228,9 @@ export const useSimulationStore = create<SimulationState>((set, get) => ({
           areas: useEditorStore.getState().areas,
         }),
       });
-    } catch (error) {
-      set({ error: (error as Error).message });
-    }
+      rafHandle = null;
+    };
+    rafHandle = requestAnimationFrame(runSlice);
   },
 
   saveRun: (label) => {

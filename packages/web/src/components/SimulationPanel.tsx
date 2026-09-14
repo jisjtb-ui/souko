@@ -15,6 +15,7 @@ export function SimulationPanel(): JSX.Element {
   const snapshot = useSimulationStore((s) => s.snapshot);
   const bottlenecks = useSimulationStore((s) => s.bottlenecks);
   const runToEnd = useSimulationStore((s) => s.runToEnd);
+  const progress = useSimulationStore((s) => s.progress);
   const error = useSimulationStore((s) => s.error);
 
   return (
@@ -83,10 +84,15 @@ export function SimulationPanel(): JSX.Element {
         </label>
 
         <div className="btn-row">
-          <button type="button" className="primary" onClick={runToEnd}>
-            最後まで一括実行
+          <button type="button" className="primary" onClick={runToEnd} disabled={status === 'computing'}>
+            {status === 'computing' ? `計算中… ${Math.round(progress * 100)}%` : '最後まで一括実行'}
           </button>
         </div>
+        {status === 'computing' && (
+          <div className="progress-bar">
+            <span style={{ width: `${Math.round(progress * 100)}%` }} />
+          </div>
+        )}
         {error && <p className="warn">{error}</p>}
         <p className="muted small">
           上部の ▶ で2Dアニメーション再生、こちらは結果だけを即座に集計します。

@@ -59,10 +59,23 @@ export function WarehouseCanvas(): JSX.Element {
   const [cursorM, setCursorM] = useState<Vec2 | null>(null);
   const [spaceHeld, setSpaceHeld] = useState(false);
   const areaDragOrigin = useRef<{ x: number; y: number } | null>(null);
+  /** ホイールイベントを1フレーム分まとめるためのバッファ */
+  const wheelAccum = useRef<{ factor: number; focus: Vec2; raf: number } | null>(null);
   const dragOrigin = useRef<Vec2 | null>(null);
   const panOrigin = useRef<{ pointer: Vec2; offset: Vec2 } | null>(null);
 
   const scale = (warehouse?.pixelsPerMeter ?? 8) * view.zoom;
+
+  /** 画面に映っている範囲（m）。描画のカリングに使う。 */
+  const viewport = useMemo(
+    () => ({
+      x: -view.offsetX / scale,
+      y: -view.offsetY / scale,
+      widthM: size.width / scale,
+      depthM: size.height / scale,
+    }),
+    [view.offsetX, view.offsetY, scale, size.width, size.height],
+  );
   const gridM = options.snapToGrid ? (warehouse?.gridSizeM ?? 0) : 0;
 
   const fitToScreen = useEditorStore((s) => s.fitToScreen);
@@ -71,6 +84,14 @@ export function WarehouseCanvas(): JSX.Element {
     // 倉庫を切り替えたときだけ全体表示に合わせる
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [warehouse?.id, size.width, size.height]);
+
+  /* 未処理のホイール更新を残さない */
+  useEffect(
+    () => () => {
+      if (wheelAccum.current) cancelAnimationFrame(wheelAccum.current.raf);
+    },
+    [],
+  );
 
   /* スペースキーで一時的にパンモードにする (業務系CADの慣習) */
   useEffect(() => {
@@ -116,12 +137,31 @@ export function WarehouseCanvas(): JSX.Element {
     return p ? { x: p.x, y: p.y } : null;
   };
 
+  /**
+   * ホイールは1フレームに何度も発火するため、requestAnimationFrame で
+   * 1フレーム1回の更新にまとめる（倍率は掛け合わせるので最終結果は同じ）。
+   */
   const handleWheel = (e: Konva.KonvaEventObject<WheelEvent>): void => {
     e.evt.preventDefault();
     const p = pointer();
     if (!p) return;
     const factor = e.evt.deltaY > 0 ? 1 / 1.12 : 1.12;
-    useEditorStore.getState().zoomBy(factor, p);
+
+    const pending = wheelAccum.current;
+    if (pending) {
+      pending.factor *= factor;
+      pending.focus = p;
+      return;
+    }
+    wheelAccum.current = {
+      factor,
+      focus: p,
+      raf: requestAnimationFrame(() => {
+        const current = wheelAccum.current;
+        wheelAccum.current = null;
+        if (current) useEditorStore.getState().zoomBy(current.factor, current.focus);
+      }),
+    };
   };
 
   const isPanGesture = (e: Konva.KonvaEventObject<MouseEvent>): boolean =>
@@ -252,27 +292,35 @@ export function WarehouseCanvas(): JSX.Element {
     }
   };
 
-  const handleSelect = (id: string, additive: boolean): void => {
+  const handleSelect = useCallback((id: string, additive: boolean): void => {
     const store = useEditorStore.getState();
     if (additive) store.toggleSelect(id);
     else if (!store.selectedIds.includes(id)) store.select([id]);
-  };
+  }, []);
 
-  const handleDragStart = (): void => {
+  const handleDragStart = useCallback((): void => {
     useEditorStore.getState()._pushHistory();
-  };
+  }, []);
 
-  const handleDragMove = (id: string, node: Konva.Node): void => {
-    const x = snapValue(node.x(), gridM);
-    const y = snapValue(node.y(), gridM);
-    node.position({ x, y });
-    useEditorStore.getState().updateObject(id, { x, y });
-  };
+  const handleDragMove = useCallback(
+    (id: string, node: Konva.Node): void => {
+      const x = snapValue(node.x(), gridM);
+      const y = snapValue(node.y(), gridM);
+      node.position({ x, y });
+      useEditorStore.getState().updateObject(id, { x, y });
+    },
+    [gridM],
+  );
 
-  const handleDragEnd = (id: string): void => {
+  const handleDragEnd = useCallback((id: string): void => {
     const obj = useEditorStore.getState().objects.find((o) => o.id === id);
     if (obj) useEditorStore.getState().log(`${obj.name} を移動しました (${obj.x.toFixed(1)}, ${obj.y.toFixed(1)})`);
-  };
+  }, []);
+
+  const handleObjectDoubleClick = useCallback((id: string): void => {
+    const obj = useEditorStore.getState().objects.find((o) => o.id === id);
+    if (obj && isRackObject(obj)) useEditorStore.getState().openRackDraft(obj, false);
+  }, []);
 
   /** 変形ハンドル操作の確定: scale を実寸 (m) に反映する。 */
   const handleTransformEnd = (): void => {
@@ -372,7 +420,12 @@ export function WarehouseCanvas(): JSX.Element {
           onContextMenu={(e) => e.evt.preventDefault()}
         >
           <Layer ref={layerRef} x={view.offsetX} y={view.offsetY} scaleX={scale} scaleY={scale}>
-            <GridLayer warehouse={warehouse} scale={scale} visible={options.showGrid} />
+            <GridLayer
+              warehouse={warehouse}
+              scale={scale}
+              visible={options.showGrid}
+              viewport={viewport}
+            />
 
             <AreaLayer
               areas={areas}
@@ -428,10 +481,7 @@ export function WarehouseCanvas(): JSX.Element {
                 onDragStart={handleDragStart}
                 onDragMove={handleDragMove}
                 onDragEnd={handleDragEnd}
-                onDoubleClick={(id) => {
-                  const obj = useEditorStore.getState().objects.find((o) => o.id === id);
-                  if (obj && isRackObject(obj)) useEditorStore.getState().openRackDraft(obj, false);
-                }}
+                onDoubleClick={handleObjectDoubleClick}
               />
             ))}
 
@@ -442,6 +492,7 @@ export function WarehouseCanvas(): JSX.Element {
                 scale={scale}
                 showCodes={options.showLocationCodes}
                 highlightRackId={highlightRackId}
+                viewport={viewport}
               />
             )}
 

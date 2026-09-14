@@ -27,8 +27,16 @@ import type { LayoutObject, Location, RackObject, Vec2 } from '../domain/types.j
 export interface SlottingContext {
   /** 候補となる全ロケーション */
   locations: readonly Location[];
-  /** ロケーションID -> 格納中の可搬ラック */
-  occupancy: ReadonlyMap<ID, RackUnit>;
+  /**
+   * 候補を絞り込むためのID集合（任意）。
+   * 呼び出し側が「空きロケーション」の索引を持っている場合に渡すと、
+   * 全ロケーションを走査せずに済む（判定条件は同じなので結果は変わらない）。
+   */
+  candidateIds?: Iterable<ID>;
+  /** candidateIds を使う場合に必要なID->ロケーションの索引 */
+  locationById?: ReadonlyMap<ID, Location>;
+  /** ロケーションID -> 格納中の可搬ラック（在庫の有無だけを見るため値は任意） */
+  occupancy: ReadonlyMap<ID, unknown>;
   /** 作業割当済みで予約されているロケーション */
   reserved: ReadonlySet<ID>;
   /** ラックID -> 保管ラック構造 */
@@ -88,8 +96,22 @@ export function matchesPreferredArea(ctx: SlottingContext, location: Location): 
   return rack.rack.areaTag === tag || rack.rack.category === tag || location.category === tag;
 }
 
-function candidatesOf(ctx: SlottingContext): Location[] {
-  return ctx.locations.filter((location) => isLocationEligible(ctx, location));
+/**
+ * 評価対象のロケーションを列挙する。
+ * candidateIds が渡されていればそれを使い、無ければ全ロケーションを走査する。
+ * どちらでも isLocationEligible による判定は同じなので、選ばれる結果は変わらない。
+ */
+function* candidatesOf(ctx: SlottingContext): Generator<Location> {
+  if (ctx.candidateIds && ctx.locationById) {
+    for (const id of ctx.candidateIds) {
+      const location = ctx.locationById.get(id);
+      if (location && isLocationEligible(ctx, location)) yield location;
+    }
+    return;
+  }
+  for (const location of ctx.locations) {
+    if (isLocationEligible(ctx, location)) yield location;
+  }
 }
 
 function measure(

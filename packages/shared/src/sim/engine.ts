@@ -271,6 +271,12 @@ export class LogisticsSimulation {
   private readonly input: SimulationInput;
   private readonly grid: NavGrid;
   private readonly pathCache = new Map<string, PathResult>();
+  /**
+   * 保管場所選定で使う距離のキャッシュ。
+   * 移動用の経路キャッシュ（毎回違う現在地が入り上限に達する）とは分ける。
+   * ゲート×ロケーションの組み合わせは固定なので件数は有界。
+   */
+  private readonly slotDistanceCache = new Map<string, number>();
   private readonly random: Random;
   /** 走行・渋滞・作業の分布 (要件14) */
   private readonly heat: Heatmap;
@@ -291,6 +297,19 @@ export class LogisticsSimulation {
   /** locationId -> rackUnitId */
   private occupancy = new Map<ID, ID>();
   private reserved = new Set<ID>();
+  /** 空きロケーションの索引（毎回の全走査を避けるため差分更新する） */
+  private readonly freeLocationIds = new Set<ID>();
+  /** 商品サイズ -> 在庫のあるロケーション（出庫対象の検索用） */
+  private readonly storedBySize = new Map<ID, Set<ID>>();
+  /** エリア -> 在庫本数（フリーロケーションの平準化に使用） */
+  private readonly inventoryByAreaCache = new Map<ID, number>();
+  /**
+   * 空き状況の版番号。空きロケーション・予約が変わるたびに進める。
+   * 「同じ状況で空きが見つからなかった」探索を繰り返さないために使う。
+   */
+  private slottingEpoch = 0;
+  /** ラック種別ごとに「この版では空きが無かった」ことを記録する */
+  private readonly slottingFailedAt = new Map<ID, number>();
   private events: SimulationEvent[] = [];
 
   private inboundPlan: InboundJob[] = [];
@@ -311,6 +330,8 @@ export class LogisticsSimulation {
   private completedTasks = 0;
   private abortedTasks = 0;
   private warnedFull = false;
+  /** 分割実行をまたいで通算するループ回数の安全弁 */
+  private runGuard = 0;
   private readonly unreachablePoints: Vec2[] = [];
   private totalTaskSeconds = 0;
   private plannedInboundUnits = 0;
@@ -338,7 +359,10 @@ export class LogisticsSimulation {
       shutters: input.shutters ?? [],
     });
 
-    for (const location of input.locations) this.locationsById.set(location.id, location);
+    for (const location of input.locations) {
+      this.locationsById.set(location.id, location);
+      if (!location.blocked) this.freeLocationIds.add(location.id);
+    }
     this.racksById = buildRackIndex(input.objects);
     for (const type of input.rackTypes) this.rackTypeById.set(type.id, type);
     for (const size of input.productSizes) this.sizeById.set(size.id, size);
@@ -493,12 +517,22 @@ export class LogisticsSimulation {
       unit.locationId = location.id;
       unit.storedAtSec = -1;
       this.rackUnits.set(unit.id, unit);
-      this.occupancy.set(location.id, unit.id);
+      this.indexStore(location.id, unit);
       filled++;
     }
   }
 
   /* ------------------------------------------------------------- 進行 */
+
+  /** 実行が完了しているか（スナップショットを作らずに確認できる）。 */
+  get isFinished(): boolean {
+    return this.finished;
+  }
+
+  /** 現在のシミュレーション内経過秒（進捗表示用）。 */
+  get elapsedSeconds(): number {
+    return this.timeSec;
+  }
 
   /** シミュレーションを dt 秒進める。 */
   step(dtSec: number): void {
@@ -517,20 +551,44 @@ export class LogisticsSimulation {
     }
   }
 
-  /** 終了まで一気に実行する（KPI算出・レイアウト比較用）。 */
-  runToEnd(options: { maxSeconds?: number; tickSeconds?: number } = {}): SimulationSnapshot {
+  /**
+   * 指定した実時間(ms)だけ実行する。分割実行の単位。
+   *
+   * 終了条件（打ち切り時間・ガード）は runToEnd と共通なので、
+   * 一気に実行しても分割して実行しても結果は同じになる。
+   *
+   * @returns 実行が完了したか
+   */
+  runFor(budgetMs: number, options: { maxSeconds?: number; tickSeconds?: number } = {}): boolean {
+    if (this.finished) return true;
     const tick = options.tickSeconds ?? this.input.config.tickSeconds;
     const limit = options.maxSeconds ?? (this.endSec - this.startSec) * 1.5;
-    let guard = 0;
-    while (!this.finished && this.timeSec < limit && guard < 400_000) {
+    const startedAt = Date.now();
+
+    while (!this.finished && this.timeSec < limit && this.runGuard < 400_000) {
       this.step(tick);
-      guard++;
+      this.runGuard++;
+      if (Date.now() - startedAt >= budgetMs) return this.finished;
     }
+
     if (!this.finished) {
       this.finished = true;
       this.emit('sim-end', 'シミュレーション終了（時間切れ：未処理が残っています）');
     }
+    return true;
+  }
+
+  /** 終了まで一気に実行する（KPI算出・レイアウト比較用）。 */
+  runToEnd(options: { maxSeconds?: number; tickSeconds?: number } = {}): SimulationSnapshot {
+    this.runFor(Number.POSITIVE_INFINITY, options);
     return this.snapshot();
+  }
+
+  /** 打ち切りまでの残り割合を求める（進捗表示用, 0-1）。 */
+  progressRatio(maxSeconds?: number): number {
+    const limit = maxSeconds ?? (this.endSec - this.startSec) * 1.5;
+    if (this.finished) return 1;
+    return Math.max(0, Math.min(0.999, this.timeSec / Math.max(1, limit)));
   }
 
   private isDrained(): boolean {
@@ -655,10 +713,15 @@ export class LogisticsSimulation {
     const rackType = this.rackTypeById.get(rack.rackTypeId);
     if (!size || !rackType) return undefined;
 
+    // 空き状況が前回の失敗時から変わっていなければ、同じ結果になるため探索しない
+    if (this.slottingFailedAt.get(rackType.id) === this.slottingEpoch) return undefined;
+
     const candidate = findFreeLocation(
       {
         locations: this.input.locations,
-        occupancy: this.rackUnitOccupancy(),
+        candidateIds: this.freeLocationIds,
+        locationById: this.locationsById,
+        occupancy: this.occupancy,
         reserved: this.reserved,
         racksById: this.racksById,
         size,
@@ -668,11 +731,12 @@ export class LogisticsSimulation {
           .filter((g) => g.type === 'outbound')
           .map((g) => g.point),
         distanceFn: (a, b) => this.pathDistance(a, b),
-        inventoryByArea: this.inventoryByArea(),
+        inventoryByArea: this.inventoryByAreaCache,
       },
       this.input.config.slottingStrategy,
     );
     if (!candidate) {
+      this.slottingFailedAt.set(rackType.id, this.slottingEpoch);
       if (!this.warnedFull) {
         this.warnedFull = true;
         this.emit('error', '空きロケーションがありません（倉庫が満杯です）');
@@ -680,7 +744,7 @@ export class LogisticsSimulation {
       return undefined;
     }
 
-    this.reserved.add(candidate.location.id);
+    this.reserve(candidate.location.id);
     this.claimedRacks.add(rack.id);
 
     return {
@@ -730,7 +794,7 @@ export class LogisticsSimulation {
         continue;
       }
 
-      const found = findStoredRackForSize(this.rackUnitOccupancy(), request.productSizeId, {
+      const found = findStoredRackForSize(this.storedRacksOfSize(request.productSizeId), request.productSizeId, {
         excludeLocationIds: this.reserved,
       });
       if (!found) {
@@ -757,7 +821,7 @@ export class LogisticsSimulation {
       request.remainingUnits -= units;
       if (request.remainingUnits <= 0) this.retrievalQueue.shift();
 
-      this.reserved.add(location.id);
+      this.reserve(location.id);
 
       const task: Task = {
         id: createId('task'),
@@ -889,7 +953,7 @@ export class LogisticsSimulation {
     const task = vehicle.task;
     if (!task) return;
     this.leaveGateQueues(vehicle);
-    for (const id of task.reservedLocationIds) this.reserved.delete(id);
+    for (const id of task.reservedLocationIds) this.release(id);
     if (task.claimedRackId) this.claimedRacks.delete(task.claimedRackId);
     if (task.kind === 'outbound') this.unfulfilledOutboundUnits += task.units;
     this.abortedTasks += 1;
@@ -1100,7 +1164,7 @@ export class LogisticsSimulation {
               y: location.y,
               storedAtSec: this.timeSec,
             });
-            this.occupancy.set(location.id, rackId);
+            this.indexStore(location.id, this.rackUnits.get(rackId)!);
           }
           this.emit('drop', `${vehicle.code} ${location.code}へ格納完了`, {
             forkliftId: vehicle.id,
@@ -1127,7 +1191,7 @@ export class LogisticsSimulation {
               });
               vehicle.carryingRackId = rackId;
             }
-            this.occupancy.delete(step.locationId);
+            this.indexRemove(step.locationId);
             this.emit('pick', `${vehicle.code} ${location.code}からラックを取得`, {
               forkliftId: vehicle.id,
               locationCode: location.code,
@@ -1214,7 +1278,7 @@ export class LogisticsSimulation {
     const task = vehicle.task;
     if (!task) return;
     this.leaveGateQueues(vehicle);
-    for (const id of task.reservedLocationIds) this.reserved.delete(id);
+    for (const id of task.reservedLocationIds) this.release(id);
     if (task.claimedRackId) this.claimedRacks.delete(task.claimedRackId);
     task.finishedAtSec = this.timeSec;
     // 「どの保管場所が遠いか」を見るため、走行距離を目的地へ集計する
@@ -1430,24 +1494,77 @@ export class LogisticsSimulation {
     }
   }
 
-  /* ------------------------------------------------------------- 補助 */
-
-  private rackUnitOccupancy(): Map<ID, RackUnit> {
-    const map = new Map<ID, RackUnit>();
-    for (const [locationId, rackId] of this.occupancy) {
-      const rack = this.rackUnits.get(rackId);
-      if (rack) map.set(locationId, rack);
-    }
-    return map;
+  /** 予約の増減も空き状況の変化として扱う。 */
+  private reserve(locationId: ID): void {
+    this.reserved.add(locationId);
+    this.slottingEpoch++;
   }
 
-  private inventoryByArea(): Map<ID, number> {
-    const map = new Map<ID, number>();
-    for (const [locationId, rackId] of this.occupancy) {
-      const location = this.locationsById.get(locationId);
-      const rack = this.rackUnits.get(rackId);
-      if (!location?.areaId || !rack) continue;
-      map.set(location.areaId, (map.get(location.areaId) ?? 0) + rack.currentUnits);
+  private release(locationId: ID): void {
+    if (this.reserved.delete(locationId)) this.slottingEpoch++;
+  }
+
+  /* --------------------------------------------------- 在庫索引の差分更新 */
+
+  /**
+   * ロケーションへラックを格納したときの索引更新。
+   * 毎回全件から作り直す代わりに、変化した分だけ反映する。
+   */
+  private indexStore(locationId: ID, rack: RackUnit): void {
+    this.occupancy.set(locationId, rack.id);
+    this.freeLocationIds.delete(locationId);
+    this.slottingEpoch++;
+
+    if (rack.productSizeId) {
+      let set = this.storedBySize.get(rack.productSizeId);
+      if (!set) {
+        set = new Set<ID>();
+        this.storedBySize.set(rack.productSizeId, set);
+      }
+      set.add(locationId);
+    }
+
+    const areaId = this.locationsById.get(locationId)?.areaId;
+    if (areaId) {
+      this.inventoryByAreaCache.set(
+        areaId,
+        (this.inventoryByAreaCache.get(areaId) ?? 0) + rack.currentUnits,
+      );
+    }
+  }
+
+  /** ロケーションからラックを取り出したときの索引更新。 */
+  private indexRemove(locationId: ID): void {
+    const rackId = this.occupancy.get(locationId);
+    const rack = rackId ? this.rackUnits.get(rackId) : undefined;
+    this.occupancy.delete(locationId);
+    if (!this.locationsById.get(locationId)?.blocked) this.freeLocationIds.add(locationId);
+    this.slottingEpoch++;
+
+    if (rack?.productSizeId) {
+      this.storedBySize.get(rack.productSizeId)?.delete(locationId);
+    }
+    const areaId = this.locationsById.get(locationId)?.areaId;
+    if (areaId && rack) {
+      const next = (this.inventoryByAreaCache.get(areaId) ?? 0) - rack.currentUnits;
+      this.inventoryByAreaCache.set(areaId, Math.max(0, next));
+    }
+  }
+
+  /* ------------------------------------------------------------- 補助 */
+
+  /**
+   * 出庫対象の検索に使う「ロケーション -> 格納中ラック」。
+   * 指定サイズの在庫だけを対象にするため、全件を作り直さない。
+   */
+  private storedRacksOfSize(productSizeId: ID): Map<ID, RackUnit> {
+    const map = new Map<ID, RackUnit>();
+    const locationIds = this.storedBySize.get(productSizeId);
+    if (!locationIds) return map;
+    for (const locationId of locationIds) {
+      const rackId = this.occupancy.get(locationId);
+      const rack = rackId ? this.rackUnits.get(rackId) : undefined;
+      if (rack) map.set(locationId, rack);
     }
     return map;
   }
@@ -1464,8 +1581,13 @@ export class LogisticsSimulation {
 
   /** 経路長（フリーロケーションの距離評価に使う）。 */
   private pathDistance(a: Vec2, b: Vec2): number {
-    const path = this.getPath(a, b);
-    return path.found ? path.lengthM : distance(a, b) * 3 + 1000;
+    const key = `${a.x.toFixed(1)},${a.y.toFixed(1)}>${b.x.toFixed(1)},${b.y.toFixed(1)}`;
+    const cached = this.slotDistanceCache.get(key);
+    if (cached !== undefined) return cached;
+    const path = findPath(this.grid, a, b);
+    const value = path.found ? path.lengthM : distance(a, b) * 3 + 1000;
+    this.slotDistanceCache.set(key, value);
+    return value;
   }
 
   private sizeLabel(id?: ID): string {

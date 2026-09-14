@@ -20,7 +20,15 @@ function SimulationControls(): JSX.Element {
   const snapshot = useSimulationStore((s) => s.snapshot);
 
   const statusLabel =
-    status === 'running' ? '実行中' : status === 'paused' ? '一時停止' : status === 'finished' ? '完了' : '停止中';
+    status === 'running'
+      ? '実行中'
+      : status === 'computing'
+        ? '計算中'
+        : status === 'paused'
+          ? '一時停止'
+          : status === 'finished'
+            ? '完了'
+            : '停止中';
 
   return (
     <div className="topbar-group sim-controls">

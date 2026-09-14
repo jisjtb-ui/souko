@@ -16,7 +16,7 @@ import {
   selectSelectedObject,
   useEditorStore,
 } from '../store/editorStore';
-import { useState } from 'react';
+import { useDeferredValue, useState } from 'react';
 import { AreaInspector, ConnectionInspector } from './AreaInspector';
 import { SimulationPanel } from './SimulationPanel';
 import { EmptyRackYardInspector, InboundGateInspector, OutboundGateInspector } from './GateInspector';
@@ -37,13 +37,28 @@ export function Inspector(): JSX.Element {
   const selectedConnectionId = useEditorStore((s) => s.selectedConnectionId);
   const selectArea = useEditorStore((s) => s.selectArea);
 
-  const stats = useMemo(() => computeStats(objects, locations, warehouse), [objects, locations, warehouse]);
-  const outOfBounds = useMemo(() => findOutOfBounds(objects, warehouse), [objects, warehouse]);
-  const areaStats = useMemo(
-    () => computeAreaStatsList(areas, objects, locations),
-    [areas, objects, locations],
+  /*
+   * 集計は全ロケーションを走査するため、ドラッグ中に毎フレーム回すと重い。
+   * useDeferredValue で低優先度にし、操作が落ち着いてから計算させる。
+   * （表示される値そのものは変わらない）
+   */
+  const deferredObjects = useDeferredValue(objects);
+  const deferredLocations = useDeferredValue(locations);
+  const deferredAreas = useDeferredValue(areas);
+
+  const stats = useMemo(
+    () => computeStats(deferredObjects, deferredLocations, warehouse),
+    [deferredObjects, deferredLocations, warehouse],
   );
-  const totalAreaM2 = useMemo(() => computeTotalArea(areas), [areas]);
+  const outOfBounds = useMemo(
+    () => findOutOfBounds(deferredObjects, warehouse),
+    [deferredObjects, warehouse],
+  );
+  const areaStats = useMemo(
+    () => computeAreaStatsList(deferredAreas, deferredObjects, deferredLocations),
+    [deferredAreas, deferredObjects, deferredLocations],
+  );
+  const totalAreaM2 = useMemo(() => computeTotalArea(deferredAreas), [deferredAreas]);
   const selectedArea = areas.find((a) => a.id === selectedAreaId);
   const selectedConnection = connections.find((c) => c.id === selectedConnectionId);
 
@@ -236,9 +251,14 @@ function GenericObjectInspector({ object }: { object: LayoutObject }): JSX.Eleme
   const openRackDraft = useEditorStore((s) => s.openRackDraft);
   const locations = useEditorStore((s) => s.locations);
 
+  // 一覧も全ロケーション走査になるため、ドラッグ中は遅延させる
+  const deferredLocations = useDeferredValue(locations);
   const rackLocations = useMemo(
-    () => locations.filter((l) => l.rackId === object.id).sort((a, b) => a.code.localeCompare(b.code)),
-    [locations, object.id],
+    () =>
+      deferredLocations
+        .filter((l) => l.rackId === object.id)
+        .sort((a, b) => a.code.localeCompare(b.code)),
+    [deferredLocations, object.id],
   );
 
   const num = (key: 'x' | 'y' | 'widthM' | 'depthM' | 'rotationDeg', label: string, step = 0.1): JSX.Element => (

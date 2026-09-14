@@ -47,12 +47,58 @@ class MinHeap {
   }
 
   private swap(a: number, b: number): void {
-    [this.items[a], this.items[b]] = [this.items[b]!, this.items[a]!];
-    [this.keys[a], this.keys[b]] = [this.keys[b]!, this.keys[a]!];
+    // 分割代入は毎回一時配列を作るため、経路探索のホットパスでは使わない
+    const item = this.items[a]!;
+    this.items[a] = this.items[b]!;
+    this.items[b] = item;
+    const key = this.keys[a]!;
+    this.keys[a] = this.keys[b]!;
+    this.keys[b] = key;
   }
 }
 
 const SQRT2 = Math.SQRT2;
+
+/**
+ * 探索用の作業領域。
+ *
+ * グリッドは数万セルになるため、呼び出しのたびに配列を確保すると
+ * GC 負荷が大きい。世代番号で有効・無効を判定して同じ領域を使い回す。
+ * （探索は逐次実行のため再入はしない）
+ */
+interface Scratch {
+  size: number;
+  gScore: Float64Array;
+  cameFrom: Int32Array;
+  /** gScore が現在の探索のものかを示す世代 */
+  gStamp: Int32Array;
+  /** クローズ済みかを示す世代 */
+  closedStamp: Int32Array;
+  generation: number;
+}
+
+let scratch: Scratch | undefined;
+
+function acquireScratch(size: number): Scratch {
+  if (!scratch || scratch.size !== size) {
+    scratch = {
+      size,
+      gScore: new Float64Array(size),
+      cameFrom: new Int32Array(size),
+      gStamp: new Int32Array(size),
+      closedStamp: new Int32Array(size),
+      generation: 0,
+    };
+  }
+  scratch.generation += 1;
+  // 世代番号が一周する前にリセットする
+  if (scratch.generation >= 0x7ffffff0) {
+    scratch.gStamp.fill(0);
+    scratch.closedStamp.fill(0);
+    scratch.generation = 1;
+  }
+  return scratch;
+}
 
 /** 8方向移動のオフセット [dx, dy, 距離係数] */
 const NEIGHBORS: readonly [number, number, number][] = [
@@ -100,9 +146,11 @@ export function findPath(
   }
 
   const total = grid.cols * grid.rows;
-  const gScore = new Float64Array(total).fill(Number.POSITIVE_INFINITY);
-  const cameFrom = new Int32Array(total).fill(-1);
-  const closed = new Uint8Array(total);
+  const work = acquireScratch(total);
+  const generation = work.generation;
+  const { gScore, cameFrom, gStamp, closedStamp } = work;
+  const gAt = (index: number): number =>
+    gStamp[index] === generation ? gScore[index]! : Number.POSITIVE_INFINITY;
 
   const startIdx = grid.index(startCell.cx, startCell.cy);
   const goalIdx = grid.index(goalCell.cx, goalCell.cy);
@@ -115,6 +163,8 @@ export function findPath(
   };
 
   gScore[startIdx] = 0;
+  gStamp[startIdx] = generation;
+  cameFrom[startIdx] = -1;
   const open = new MinHeap();
   open.push(startIdx, heuristic(startIdx));
 
@@ -125,8 +175,8 @@ export function findPath(
 
   while (open.size > 0) {
     const current = open.pop()!;
-    if (closed[current]) continue;
-    closed[current] = 1;
+    if (closedStamp[current] === generation) continue;
+    closedStamp[current] = generation;
     expanded++;
 
     if (current === goalIdx) {
@@ -156,12 +206,13 @@ export function findPath(
       }
 
       const nIdx = grid.index(nx, ny);
-      if (closed[nIdx]) continue;
+      if (closedStamp[nIdx] === generation) continue;
       // エリアをまたぐ移動は、通行可能な接続口を通る場合のみ許可する
       if (!grid.canTraverse(current, nIdx)) continue;
-      const tentative = gScore[current]! + step * nCost;
-      if (tentative < gScore[nIdx]!) {
+      const tentative = gAt(current) + step * nCost;
+      if (tentative < gAt(nIdx)) {
         gScore[nIdx] = tentative;
+        gStamp[nIdx] = generation;
         cameFrom[nIdx] = current;
         open.push(nIdx, tentative + heuristic(nIdx));
       }
@@ -175,7 +226,7 @@ export function findPath(
 
   // 経路復元
   const cells: number[] = [];
-  for (let idx = endIdx; idx !== -1; idx = cameFrom[idx]!) {
+  for (let idx = endIdx; idx !== -1; idx = gStamp[idx] === generation ? cameFrom[idx]! : -1) {
     cells.push(idx);
     if (idx === startIdx) break;
   }

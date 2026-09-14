@@ -1,4 +1,5 @@
-import { Group, Line, Rect, Text } from 'react-konva';
+import { memo } from 'react';
+import { Group, Line, Rect, Shape, Text } from 'react-konva';
 import type Konva from 'konva';
 import { getObjectSpec, isForkliftObject, isRackObject } from '@ws/shared';
 import type { LayoutObject } from '@ws/shared';
@@ -22,7 +23,7 @@ interface Props {
  * 配置オブジェクト1件の描画。
  * 座標系はメートル。Konva の Group を (x, y) 回転中心として使う。
  */
-export function ObjectShape({
+function ObjectShapeBase({
   object,
   scale,
   selected,
@@ -100,32 +101,58 @@ export function ObjectShape({
   );
 }
 
-/** ラックの間口 (列) の区切りとピッキング面の向きを描く。 */
-function RackDetail({ object, scale }: { object: LayoutObject & { rack: { columns: number; face: string } }; scale: number }): JSX.Element {
+/**
+ * 配置オブジェクトは数百〜数千件になり得るため、props が変わらない限り
+ * 再描画しない（パン・ドラッグ時に動いていないオブジェクトを作り直さない）。
+ */
+export const ObjectShape = memo(ObjectShapeBase);
+
+/**
+ * ラックの間口 (列) の区切りとピッキング面の向きを描く。
+ *
+ * 列数は数十になり得るため、区切り線ごとに Konva ノードを作らず
+ * 1つの Shape にまとめて描画する。
+ */
+function RackDetail({
+  object,
+  scale,
+}: {
+  object: LayoutObject & { rack: { columns: number; face: string } };
+  scale: number;
+}): JSX.Element {
   const { columns, face } = object.rack;
   const bay = object.widthM / Math.max(1, columns);
   const hairline = 0.8 / scale;
-  const dividers = [];
-  for (let i = 1; i < columns; i++) {
-    dividers.push(
-      <Line
-        key={i}
-        points={[bay * i, 0, bay * i, object.depthM]}
-        stroke="#7b8fab"
-        strokeWidth={hairline}
-        listening={false}
-      />,
-    );
-  }
-  // ピッキング面 (作業する側) を太線で示す
   const faceY = face === 'back' ? object.depthM : 0;
+
   return (
-    <Group listening={false}>
-      {dividers}
-      {face !== 'both' && (
-        <Line points={[0, faceY, object.widthM, faceY]} stroke="#2f5d9e" strokeWidth={3 / scale} />
-      )}
-    </Group>
+    <Shape
+      listening={false}
+      perfectDrawEnabled={false}
+      sceneFunc={(ctx) => {
+        // 間口の区切り
+        if (columns > 1) {
+          ctx.beginPath();
+          for (let i = 1; i < columns; i++) {
+            ctx.moveTo(bay * i, 0);
+            ctx.lineTo(bay * i, object.depthM);
+          }
+          ctx.setAttr('strokeStyle', '#7b8fab');
+          ctx.setAttr('lineWidth', hairline);
+          ctx.stroke();
+        }
+
+        // ピッキング面 (作業する側) を太線で示す
+        if (face !== 'both') {
+          ctx.beginPath();
+          ctx.moveTo(0, faceY);
+          ctx.lineTo(object.widthM, faceY);
+          ctx.setAttr('strokeStyle', '#2f5d9e');
+          ctx.setAttr('lineWidth', 3 / scale);
+          ctx.stroke();
+        }
+      }}
+    />
   );
 }
 
