@@ -1,0 +1,13 @@
+# Windows のコマンドプロンプトで実行するバッチファイルは CRLF を保つ
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# それ以外のテキストは LF
+*.ts   text eol=lf
+*.tsx  text eol=lf
+*.js   text eol=lf
+*.mjs  text eol=lf
+*.json text eol=lf
+*.css  text eol=lf
+*.html text eol=lf
+*.md   text eol=lf
