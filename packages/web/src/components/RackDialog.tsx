@@ -91,16 +91,30 @@ function RackDialogInner({ object, isNew, onCancel, onApply }: InnerProps): JSX.
               </label>
             </div>
 
-            <div className="step-label">2. 列数</div>
+            <div className="step-label">2. 縦列</div>
             <div className="field-grid">
               <label className="field">
-                <span>列数（間口）</span>
+                <span>縦列の数</span>
                 <input
                   type="number"
                   min={1}
                   max={200}
                   value={spec.columns}
                   onChange={(e) => setSpec((s) => ({ ...s, columns: Math.max(1, Number(e.target.value)) }))}
+                />
+              </label>
+              <label className="field">
+                <span>1列の横幅 (m)</span>
+                <input
+                  type="number"
+                  step={0.1}
+                  min={0.3}
+                  value={Number(bayWidth.toFixed(2))}
+                  onChange={(e) => {
+                    // 1列の幅を指定したら、ラック全体の幅を 列数 × 指定値 に合わせる
+                    const lane = Math.max(0.3, Number(e.target.value));
+                    setWidthM(Number((lane * spec.columns).toFixed(2)));
+                  }}
                 />
               </label>
               <label className="field">
@@ -113,6 +127,10 @@ function RackDialogInner({ object, isNew, onCancel, onApply }: InnerProps): JSX.
               </label>
             </div>
             <p className="muted small">
+              ラック幅 = 縦列の数 × 1列の横幅。どちらを変えても他方が追従します。
+              <br />
+              1つの縦列には1サイズだけを入れます（シミュレーション設定で切り替え可）。
+              <br />
               段数と1ラックの入り本数はここでは決めません。
               シミュレーションパネルの「段数の割合」「入り本数の割合」で指定します。
             </p>
@@ -212,8 +230,10 @@ function RackDialogInner({ object, isNew, onCancel, onApply }: InnerProps): JSX.
             <div className="step-label">4. 生成されるロケーション</div>
             <div className="preview-box">
               <div className="preview-count">
-                {spec.columns} 列 = <strong>{total}</strong> ロケーション
-                <span className="muted small">（間口 {bayWidth.toFixed(2)}m）</span>
+                縦列 {spec.columns} 本 = <strong>{total}</strong> ロケーション
+                <span className="muted small">
+                  （1列 {bayWidth.toFixed(2)}m × 奥行 {depthM.toFixed(2)}m）
+                </span>
               </div>
               <div className="muted small">段数はシミュレーション時に割合から決まります。</div>
               <div className="preview-codes">

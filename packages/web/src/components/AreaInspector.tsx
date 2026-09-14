@@ -93,30 +93,26 @@ export function AreaInspector({ area }: { area: Area }): JSX.Element {
             onChange={(e) => updateArea(area.id, { rotationDeg: Number(e.target.value) })}
           />
         </label>
-        {area.type === 'rect' && (
-          <>
-            <label className="field">
-              <span>幅 (m)</span>
-              <input
-                type="number"
-                step={0.5}
-                min={0.5}
-                value={Number(bounds.widthM.toFixed(2))}
-                onChange={(e) => resizeRect(area, Number(e.target.value), undefined, updateArea)}
-              />
-            </label>
-            <label className="field">
-              <span>奥行 (m)</span>
-              <input
-                type="number"
-                step={0.5}
-                min={0.5}
-                value={Number(bounds.depthM.toFixed(2))}
-                onChange={(e) => resizeRect(area, undefined, Number(e.target.value), updateArea)}
-              />
-            </label>
-          </>
-        )}
+        <label className="field">
+          <span>幅 (m)</span>
+          <input
+            type="number"
+            step={0.5}
+            min={0.5}
+            value={Number(bounds.widthM.toFixed(2))}
+            onChange={(e) => resizeArea(area, Number(e.target.value), undefined, updateArea)}
+          />
+        </label>
+        <label className="field">
+          <span>奥行 (m)</span>
+          <input
+            type="number"
+            step={0.5}
+            min={0.5}
+            value={Number(bounds.depthM.toFixed(2))}
+            onChange={(e) => resizeArea(area, undefined, Number(e.target.value), updateArea)}
+          />
+        </label>
       </div>
 
       <dl className="stat-grid compact">
@@ -211,8 +207,13 @@ export function AreaInspector({ area }: { area: Area }): JSX.Element {
   );
 }
 
-/** 矩形エリアのサイズ変更（4頂点を作り直す）。 */
-function resizeRect(
+/**
+ * エリアのサイズを数値で変更する。
+ *
+ * 矩形は4頂点を作り直す。多角形は形を保ったまま、
+ * 外接サイズが指定値になるよう頂点を拡大・縮小する。
+ */
+function resizeArea(
   area: Area,
   widthM: number | undefined,
   depthM: number | undefined,
@@ -221,15 +222,39 @@ function resizeRect(
   const bounds = areaBounds(area);
   const w = Math.max(0.5, widthM ?? bounds.widthM);
   const d = Math.max(0.5, depthM ?? bounds.depthM);
+
+  if (area.type === 'rect') {
+    updateArea(area.id, {
+      polygon: [
+        { x: 0, y: 0 },
+        { x: w, y: 0 },
+        { x: w, y: d },
+        { x: 0, y: d },
+      ],
+    });
+    return;
+  }
+
+  // 多角形: 外接矩形の左上を基準に、縦横それぞれを拡大縮小する
+  const xs = area.polygon.map((pt) => pt.x);
+  const ys = area.polygon.map((pt) => pt.y);
+  const minX = Math.min(...xs);
+  const minY = Math.min(...ys);
+  const currentW = Math.max(...xs) - minX;
+  const currentD = Math.max(...ys) - minY;
+  // 潰れた形は拡大できないので、その軸はそのままにする
+  const scaleX = currentW > 0.001 ? w / currentW : 1;
+  const scaleY = currentD > 0.001 ? d / currentD : 1;
+
   updateArea(area.id, {
-    polygon: [
-      { x: 0, y: 0 },
-      { x: w, y: 0 },
-      { x: w, y: d },
-      { x: 0, y: d },
-    ],
+    polygon: area.polygon.map((pt) => ({
+      x: round2(minX + (pt.x - minX) * scaleX),
+      y: round2(minY + (pt.y - minY) * scaleY),
+    })),
   });
 }
+
+const round2 = (value: number): number => Math.round(value * 100) / 100;
 
 /** 接続口を選択したときのプロパティパネル。 */
 export function ConnectionInspector({ connection }: { connection: AreaConnection }): JSX.Element {

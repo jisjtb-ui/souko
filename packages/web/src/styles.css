@@ -259,6 +259,9 @@ select {
   position: absolute;
   inset: 0;
   overflow: hidden;
+  /* タッチのスワイプ・ピンチを自前で処理するため、ブラウザ既定の
+     スクロール/ズームを無効にする */
+  touch-action: none;
 }
 
 .overlay-message {
@@ -1532,4 +1535,11 @@ button.link {
 .warn.small {
   font-size: 11px;
   margin: 4px 0 0;
+}
+
+/* マップ操作の常設ヒント（控えめに出す） */
+.canvas-hint.subtle {
+  background: rgba(37, 50, 65, 0.72);
+  font-weight: normal;
+  opacity: 0.75;
 }

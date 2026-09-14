@@ -18,6 +18,7 @@ import { findPath } from './astar.js';
 import { advanceAlongPath } from './travel.js';
 import { Random } from './random.js';
 import { applyLevelMix, drawFillUnits } from './mixes.js';
+import { laneKey } from './slotting.js';
 import { generateEventPlan } from './eventGeneration.js';
 import {
   addUnits,
@@ -307,6 +308,13 @@ export class LogisticsSimulation {
   private readonly freeLocationIds = new Set<ID>();
   /** 商品サイズ -> 在庫のあるロケーション（出庫対象の検索用） */
   private readonly storedBySize = new Map<ID, Set<ID>>();
+  /**
+   * 縦列(レーン)ごとに入っている商品サイズ。
+   * 1レーン1サイズの制約に使う。件数も持ち、空になったら解放する。
+   */
+  private readonly laneSizes = new Map<string, { sizeId: ID; count: number }>();
+  /** スロッティングへ渡す用（サイズだけを見せる） */
+  private readonly laneSizeView = new Map<string, ID>();
   /** エリア -> 在庫本数（フリーロケーションの平準化に使用） */
   private readonly inventoryByAreaCache = new Map<ID, number>();
   /**
@@ -314,8 +322,12 @@ export class LogisticsSimulation {
    * 「同じ状況で空きが見つからなかった」探索を繰り返さないために使う。
    */
   private slottingEpoch = 0;
-  /** ラック種別ごとに「この版では空きが無かった」ことを記録する */
-  private readonly slottingFailedAt = new Map<ID, number>();
+  /**
+   * 「この版では空きが無かった」ことを記録する。
+   * 1レーン1サイズの制約があると可否は商品サイズにも依存するため、
+   * キーは「ラック種別 × 商品サイズ」にする。
+   */
+  private readonly slottingFailedAt = new Map<string, number>();
   private events: SimulationEvent[] = [];
 
   private inboundPlan: InboundJob[] = [];
@@ -738,11 +750,14 @@ export class LogisticsSimulation {
     if (!size || !rackType) return undefined;
 
     // 空き状況が前回の失敗時から変わっていなければ、同じ結果になるため探索しない
-    if (this.slottingFailedAt.get(rackType.id) === this.slottingEpoch) return undefined;
+    const failKey = `${rackType.id}|${size.id}`;
+    if (this.slottingFailedAt.get(failKey) === this.slottingEpoch) return undefined;
 
     const candidate = findFreeLocation(
       {
         locations: this.locations,
+        oneSizePerLane: this.input.config.oneSizePerLane ?? false,
+        laneSizeOf: this.laneSizeView,
         candidateIds: this.freeLocationIds,
         locationById: this.locationsById,
         occupancy: this.occupancy,
@@ -760,7 +775,7 @@ export class LogisticsSimulation {
       this.input.config.slottingStrategy,
     );
     if (!candidate) {
-      this.slottingFailedAt.set(rackType.id, this.slottingEpoch);
+      this.slottingFailedAt.set(failKey, this.slottingEpoch);
       if (!this.warnedFull) {
         this.warnedFull = true;
         this.emit('error', '空きロケーションがありません（倉庫が満杯です）');
@@ -1546,6 +1561,20 @@ export class LogisticsSimulation {
         this.storedBySize.set(rack.productSizeId, set);
       }
       set.add(locationId);
+
+      const location = this.locationsById.get(locationId);
+      if (location) {
+        const key = laneKey(location.rackId, location.column);
+        const lane = this.laneSizes.get(key);
+        if (lane && lane.sizeId === rack.productSizeId) {
+          lane.count += 1;
+        } else if (!lane) {
+          this.laneSizes.set(key, { sizeId: rack.productSizeId, count: 1 });
+          this.laneSizeView.set(key, rack.productSizeId);
+        }
+        // サイズが違う場合は制約違反だが、既存データの読み込み時などに
+        // 起こり得るため、先に入っていた方を優先して黙って通す。
+      }
     }
 
     const areaId = this.locationsById.get(locationId)?.areaId;
@@ -1567,6 +1596,19 @@ export class LogisticsSimulation {
 
     if (rack?.productSizeId) {
       this.storedBySize.get(rack.productSizeId)?.delete(locationId);
+
+      const location = this.locationsById.get(locationId);
+      if (location) {
+        const key = laneKey(location.rackId, location.column);
+        const lane = this.laneSizes.get(key);
+        if (lane && lane.sizeId === rack.productSizeId) {
+          lane.count -= 1;
+          if (lane.count <= 0) {
+            this.laneSizes.delete(key);
+            this.laneSizeView.delete(key);
+          }
+        }
+      }
     }
     const areaId = this.locationsById.get(locationId)?.areaId;
     if (areaId && rack) {

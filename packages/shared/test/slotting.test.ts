@@ -9,10 +9,18 @@ import {
   findStoredRackForSize,
   generateLocationsForRack,
   isLocationEligible,
+  laneKey,
   matchesPreferredArea,
   SLOTTING_STRATEGY_LABEL,
 } from '../src/index.js';
-import type { Location, RackObject, RackUnit, SlottingContext } from '../src/index.js';
+import type {
+  Location,
+  ProductSize,
+  RackObject,
+  RackType,
+  RackUnit,
+  SlottingContext,
+} from '../src/index.js';
 
 const [smallType, largeType] = createDefaultRackTypes('wh_1');
 const sizes = createDefaultProductSizes('wh_1');
@@ -230,5 +238,70 @@ describe('出庫対象の検索', () => {
 
   it('該当サイズの在庫が無ければ undefined', () => {
     expect(findStoredRackForSize(new Map(), smallHighTurnover.id)).toBeUndefined();
+  });
+});
+
+describe('縦列には1サイズのみ (1レーン1サイズ)', () => {
+  const rack = createLayoutObject({
+    layoutId: 'lay_1',
+    kind: 'rack',
+    x: 0,
+    y: 0,
+    widthM: 4,
+    depthM: 1.2,
+    rack: { columns: 2, levels: 2, capacityPerLocation: 0 },
+  }) as RackObject;
+  const locations = generateLocationsForRack(rack);
+  const racksById = new Map([[rack.id, rack]]);
+
+  const sizeA = { id: 'psz_a', rackCategory: 'small', unitsPerRack: 10 } as ProductSize;
+  const sizeB = { id: 'psz_b', rackCategory: 'small', unitsPerRack: 10 } as ProductSize;
+  const rackType = { id: 'rt_s', category: 'small', maxUnits: 10 } as RackType;
+
+  const ctxFor = (size: ProductSize, laneSizeOf: Map<string, string>, on: boolean) => ({
+    locations,
+    occupancy: new Map<string, unknown>(),
+    reserved: new Set<string>(),
+    racksById,
+    size,
+    rackType,
+    fromPoint: { x: 0, y: 0 },
+    outboundPoints: [{ x: 10, y: 10 }],
+    oneSizePerLane: on,
+    laneSizeOf,
+  });
+
+  it('同じ列に別サイズは入らない', () => {
+    const first = locations[0]!;
+    const laneSizeOf = new Map([[laneKey(first.rackId, first.column), sizeA.id]]);
+
+    // 同じ列 = 使えない / 別の列 = 使える
+    const sameLane = locations.filter((l) => l.column === first.column);
+    const otherLane = locations.filter((l) => l.column !== first.column);
+    expect(sameLane.length).toBeGreaterThan(0);
+    expect(otherLane.length).toBeGreaterThan(0);
+
+    for (const l of sameLane) {
+      expect(isLocationEligible(ctxFor(sizeB, laneSizeOf, true), l)).toBe(false);
+    }
+    for (const l of otherLane) {
+      expect(isLocationEligible(ctxFor(sizeB, laneSizeOf, true), l)).toBe(true);
+    }
+  });
+
+  it('同じ列に同じサイズなら入る（段違いでも同じ列とみなす）', () => {
+    const first = locations[0]!;
+    const laneSizeOf = new Map([[laneKey(first.rackId, first.column), sizeA.id]]);
+    for (const l of locations.filter((x) => x.column === first.column)) {
+      expect(isLocationEligible(ctxFor(sizeA, laneSizeOf, true), l)).toBe(true);
+    }
+  });
+
+  it('制約を切ると別サイズでも入る', () => {
+    const first = locations[0]!;
+    const laneSizeOf = new Map([[laneKey(first.rackId, first.column), sizeA.id]]);
+    for (const l of locations.filter((x) => x.column === first.column)) {
+      expect(isLocationEligible(ctxFor(sizeB, laneSizeOf, false), l)).toBe(true);
+    }
   });
 });

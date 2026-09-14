@@ -62,7 +62,9 @@ export function WarehouseCanvas(): JSX.Element {
   /** ホイールイベントを1フレーム分まとめるためのバッファ */
   const wheelAccum = useRef<{ factor: number; focus: Vec2; raf: number } | null>(null);
   const dragOrigin = useRef<Vec2 | null>(null);
-  const panOrigin = useRef<{ pointer: Vec2; offset: Vec2 } | null>(null);
+  const panOrigin = useRef<{ pointer: Vec2; offset: Vec2; moved: boolean } | null>(null);
+  /** 2本指ピンチの開始時の指間距離と倍率 */
+  const pinchOrigin = useRef<{ distance: number; zoom: number } | null>(null);
 
   const scale = (warehouse?.pixelsPerMeter ?? 8) * view.zoom;
 
@@ -167,6 +169,14 @@ export function WarehouseCanvas(): JSX.Element {
   const isPanGesture = (e: Konva.KonvaEventObject<MouseEvent>): boolean =>
     tool === 'pan' || spaceHeld || e.evt.button === 1;
 
+  /** 何もない場所を掴んだか（掴んだらドラッグでマップを動かせる） */
+  const isEmptyTarget = (target: Konva.Node): boolean =>
+    target === target.getStage() || target.name() === 'floor';
+
+  const beginPan = (p: Vec2): void => {
+    panOrigin.current = { pointer: p, offset: { x: view.offsetX, y: view.offsetY }, moved: false };
+  };
+
   const handleStageMouseDown = (e: Konva.KonvaEventObject<MouseEvent>): void => {
     const p = pointer();
     if (!p) return;
@@ -174,12 +184,19 @@ export function WarehouseCanvas(): JSX.Element {
     const store = useEditorStore.getState();
 
     if (isPanGesture(e)) {
-      panOrigin.current = { pointer: p, offset: { x: view.offsetX, y: view.offsetY } };
+      beginPan(p);
       return;
     }
 
     // オブジェクト上のクリックは ObjectShape 側で処理済み
-    const clickedEmpty = e.target === e.target.getStage() || e.target.name() === 'floor';
+    const clickedEmpty = isEmptyTarget(e.target);
+
+    // 選択ツールで何もない所をドラッグ → マップを動かす（スワイプ）
+    // 範囲選択は Shift を押しながらのドラッグに割り当てている
+    if (tool === 'select' && !placingKind && clickedEmpty && !e.evt.shiftKey) {
+      beginPan(p);
+      return;
+    }
 
     if (placingKind) {
       store.placeObject(placingKind, meters);
@@ -251,10 +268,11 @@ export function WarehouseCanvas(): JSX.Element {
 
     if (panOrigin.current) {
       const { pointer: origin, offset } = panOrigin.current;
-      useEditorStore.getState().setView({
-        offsetX: offset.x + (p.x - origin.x),
-        offsetY: offset.y + (p.y - origin.y),
-      });
+      const dx = p.x - origin.x;
+      const dy = p.y - origin.y;
+      // 数ピクセルの揺れはクリック扱いにする（クリックで選択解除できるように）
+      if (!panOrigin.current.moved && Math.hypot(dx, dy) > 3) panOrigin.current.moved = true;
+      useEditorStore.getState().setView({ offsetX: offset.x + dx, offsetY: offset.y + dy });
       return;
     }
     if (dragOrigin.current) {
@@ -270,7 +288,14 @@ export function WarehouseCanvas(): JSX.Element {
   };
 
   const handleStageMouseUp = (): void => {
+    const pan = panOrigin.current;
     panOrigin.current = null;
+    pinchOrigin.current = null;
+
+    // 動かさずに離した＝クリック。選択ツールなら選択を解除する。
+    if (pan && !pan.moved && tool === 'select' && !placingKind) {
+      useEditorStore.getState().clearSelection();
+    }
 
     if (tool === 'area-rect' && areaDraftBox) {
       const { x, y, widthM, depthM } = areaDraftBox;
@@ -290,6 +315,63 @@ export function WarehouseCanvas(): JSX.Element {
       dragOrigin.current = null;
       setSelectionBox(null);
     }
+  };
+
+  /* ------------------------------------------------------------ タッチ操作 */
+
+  const touchDistance = (touches: TouchList): number => {
+    const a = touches[0]!;
+    const b = touches[1]!;
+    return Math.hypot(a.clientX - b.clientX, a.clientY - b.clientY);
+  };
+
+  /** 1本指で何もない所をなぞる → スワイプでマップを動かす。2本指 → ピンチで拡大縮小。 */
+  const handleTouchStart = (e: Konva.KonvaEventObject<TouchEvent>): void => {
+    const touches = e.evt.touches;
+    if (touches.length >= 2) {
+      e.evt.preventDefault();
+      panOrigin.current = null;
+      pinchOrigin.current = { distance: touchDistance(touches), zoom: view.zoom };
+      return;
+    }
+    if (touches.length !== 1) return;
+    // オブジェクトの上は Konva のドラッグに任せる（移動できなくなるため）
+    if (!isEmptyTarget(e.target)) return;
+    const p = pointer();
+    if (!p) return;
+    e.evt.preventDefault();
+    beginPan(p);
+  };
+
+  const handleTouchMove = (e: Konva.KonvaEventObject<TouchEvent>): void => {
+    const touches = e.evt.touches;
+
+    if (pinchOrigin.current && touches.length >= 2) {
+      e.evt.preventDefault();
+      const { distance, zoom } = pinchOrigin.current;
+      if (distance <= 0) return;
+      const stage = stageRef.current;
+      const rect = stage?.container().getBoundingClientRect();
+      const focus = rect
+        ? {
+            x: (touches[0]!.clientX + touches[1]!.clientX) / 2 - rect.left,
+            y: (touches[0]!.clientY + touches[1]!.clientY) / 2 - rect.top,
+          }
+        : { x: size.width / 2, y: size.height / 2 };
+      const next = zoom * (touchDistance(touches) / distance);
+      // zoomBy は「現在の倍率に対する係数」を受け取るので割り算で換算する
+      useEditorStore.getState().zoomBy(next / view.zoom, focus);
+      return;
+    }
+
+    if (panOrigin.current && touches.length === 1) {
+      e.evt.preventDefault();
+      handleStageMouseMove();
+    }
+  };
+
+  const handleTouchEnd = (): void => {
+    handleStageMouseUp();
   };
 
   const handleSelect = useCallback((id: string, additive: boolean): void => {
@@ -387,7 +469,8 @@ export function WarehouseCanvas(): JSX.Element {
       ? 'grab'
       : tool === 'route' || tool === 'area-rect' || tool === 'area-polygon' || tool === 'connect'
         ? 'crosshair'
-        : 'default';
+        : // 選択ツールでは何もない所をドラッグするとマップが動くので、掴める見た目にする
+          'grab';
 
   /** ツールバーからのドラッグ＆ドロップ配置 */
   const handleDrop = (e: React.DragEvent<HTMLDivElement>): void => {
@@ -417,6 +500,9 @@ export function WarehouseCanvas(): JSX.Element {
           onMouseMove={handleStageMouseMove}
           onMouseUp={handleStageMouseUp}
           onMouseLeave={handleStageMouseUp}
+          onTouchStart={handleTouchStart}
+          onTouchMove={handleTouchMove}
+          onTouchEnd={handleTouchEnd}
           onContextMenu={(e) => e.evt.preventDefault()}
         >
           <Layer ref={layerRef} x={view.offsetX} y={view.offsetY} scaleX={scale} scaleY={scale}>
@@ -568,6 +654,12 @@ function CanvasHud(): JSX.Element {
           {warehouse ? `${warehouse.widthM}m × ${warehouse.depthM}m` : '-'} / 1m = {warehouse?.pixelsPerMeter ?? 0}px
         </span>
       </div>
+
+      {tool === 'select' && !placingKind && (
+        <div className="canvas-hint subtle">
+          ドラッグでマップを移動 / Shift+ドラッグで範囲選択 / ホイールで拡大縮小
+        </div>
+      )}
 
       {(placingKind || tool === 'route') && (
         <div className="canvas-hint">

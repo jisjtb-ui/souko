@@ -53,6 +53,21 @@ export interface SlottingContext {
   distanceFn?: (a: Vec2, b: Vec2) => number;
   /** エリアごとの在庫数（偏りの平準化に使う） */
   inventoryByArea?: ReadonlyMap<ID, number>;
+  /**
+   * 縦列(レーン)に1サイズだけを入れる制約を使うか。
+   * 同じ列に別サイズが混ざると、奥の在庫を出すのに手前をどける手間が出るため。
+   */
+  oneSizePerLane?: boolean;
+  /** レーンキー -> そのレーンに入っている商品サイズ */
+  laneSizeOf?: ReadonlyMap<string, ID>;
+}
+
+/**
+ * 縦列(レーン)を表すキー。
+ * レーン = 「1本のラックの1列」。段違いでも同じ列なら同じレーンとして扱う。
+ */
+export function laneKey(rackId: ID, column: number): string {
+  return `${rackId}|${column}`;
 }
 
 export interface SlottingCandidate {
@@ -83,6 +98,12 @@ export function isLocationEligible(ctx: SlottingContext, location: Location): bo
 
   // ロケーションの収納可能数が足りているか
   if (location.capacity > 0 && location.capacity < ctx.rackType.maxUnits) return false;
+
+  // 縦列には1サイズのみ
+  if (ctx.oneSizePerLane && ctx.laneSizeOf) {
+    const current = ctx.laneSizeOf.get(laneKey(location.rackId, location.column));
+    if (current !== undefined && current !== ctx.size.id) return false;
+  }
 
   return true;
 }

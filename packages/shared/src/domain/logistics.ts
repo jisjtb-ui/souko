@@ -335,6 +335,11 @@ export interface LogisticsSimConfig {
   handlingSeconds: number;
   /** 通路での追突回避を行うか */
   collisionAvoidance: boolean;
+  /**
+   * 縦列(1本のラックの1列)に1サイズだけを入れる。
+   * 同じ列に別サイズが混ざると、奥の在庫を出すのに手前をどける手間が出る。
+   */
+  oneSizePerLane: boolean;
 }
 
 export const DEFAULT_SIM_CONFIG: LogisticsSimConfig = {
@@ -353,6 +358,7 @@ export const DEFAULT_SIM_CONFIG: LogisticsSimConfig = {
   fillMix: [{ fillPct: 100, ratioPct: 100 }],
   handlingSeconds: 20,
   collisionAvoidance: true,
+  oneSizePerLane: true,
 };
 
 /* ------------------------------------------------------------ バリデーション */

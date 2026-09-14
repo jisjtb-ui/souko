@@ -269,6 +269,24 @@ export function analyzeBottlenecks(input: AnalysisInput): Bottleneck[] {
   const yard = stackUtilization(snapshot.stacks, rackTypes);
   if (yard.totalStacks > 0) {
     const ratio = yard.stackedRacks / Math.max(1, yard.capacity);
+
+    // 積み重ねられずに構内に残っている空ラック。
+    // 置き場の容量を超えて余っているなら、スタックが満杯に見えなくても逼迫している。
+    const stackedIds = new Set(snapshot.stacks.flatMap((stack) => stack.rackUnitIds));
+    const strandedEmpties = snapshot.rackUnits.filter(
+      (unit) => unit.status === 'empty' && !stackedIds.has(unit.id),
+    ).length;
+
+    if (strandedEmpties > yard.capacity) {
+      found.push({
+        id: 'yard-overflow',
+        category: 'empty-yard',
+        severity: 'warning',
+        title: '空ラックが置き場に収まっていません',
+        detail: `置き場の容量 ${yard.capacity} 台に対し、積み重ねられていない空ラックが ${strandedEmpties} 台あります。置き場を広げるか、空ラックの回収頻度を上げてください。`,
+      });
+    }
+
     if (yard.full || ratio > 0.9) {
       found.push({
         id: 'yard-full',

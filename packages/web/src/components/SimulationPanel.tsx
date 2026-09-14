@@ -92,6 +92,14 @@ export function SimulationPanel(): JSX.Element {
           />
           通路での追突回避（渋滞をシミュレーション）
         </label>
+        <label className="check">
+          <input
+            type="checkbox"
+            checked={config.oneSizePerLane}
+            onChange={(e) => setConfig({ oneSizePerLane: e.target.checked })}
+          />
+          縦列には1サイズのみ入れる
+        </label>
 
         <LevelMixEditor />
         <FillMixEditor />
