@@ -3,6 +3,7 @@ import { api } from '../api/client';
 import { SPEED_OPTIONS, useSimulationStore } from '../store/simulationStore';
 import type { WarehouseSummary } from '../api/client';
 import { useEditorStore } from '../store/editorStore';
+import type { Page } from '../App';
 
 /**
  * 上部バー: ファイル操作 (倉庫/レイアウトの切替・保存) と
@@ -61,9 +62,13 @@ function SimulationControls(): JSX.Element {
 }
 
 export function TopBar({
+  page,
+  onChangePage,
   onOpenSettings,
   onOpenMasters,
 }: {
+  page: Page;
+  onChangePage: (page: Page) => void;
   onOpenSettings: () => void;
   onOpenMasters: () => void;
 }): JSX.Element {
@@ -103,6 +108,23 @@ export function TopBar({
         <span className="brand-mark">WS</span>
         <span className="brand-name">Warehouse Simulator</span>
       </div>
+
+      <nav className="topbar-nav" aria-label="画面切替">
+        <button
+          type="button"
+          className={page === 'editor' ? 'active' : undefined}
+          onClick={() => onChangePage('editor')}
+        >
+          平面図
+        </button>
+        <button
+          type="button"
+          className={page === 'dead-position' ? 'active' : undefined}
+          onClick={() => onChangePage('dead-position')}
+        >
+          死にポジション<span className="nav-long">分析</span>
+        </button>
+      </nav>
 
       <div className="topbar-group">
         <label className="field-inline">

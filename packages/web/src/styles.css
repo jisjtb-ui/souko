@@ -57,7 +57,7 @@ select {
 .topbar {
   display: flex;
   align-items: center;
-  gap: 14px;
+  gap: 10px;
   height: var(--topbar-h);
   padding: 0 12px;
   background: var(--chrome);
@@ -152,13 +152,13 @@ select {
 }
 
 /* 幅が足りないときは補助的な表示から順に隠す（重なりを防ぐ） */
-@media (max-width: 1680px) {
+@media (max-width: 1870px) {
   .sim-progress {
     display: none;
   }
 }
 
-@media (max-width: 1560px) {
+@media (max-width: 1750px) {
   .brand-name {
     display: none;
   }
@@ -168,8 +168,20 @@ select {
   }
 }
 
-@media (max-width: 1360px) {
+@media (max-width: 1550px) {
   .topbar .save-state {
+    display: none;
+  }
+}
+
+/* 画面切替タブを置いた分、狭い画面ではラベル類をさらに畳む */
+@media (max-width: 1400px) {
+  .sim-label,
+  .brand-mark {
+    display: none;
+  }
+
+  .topbar-nav .nav-long {
     display: none;
   }
 }
@@ -1176,4 +1188,289 @@ button.link {
   height: 100%;
   background: var(--accent);
   transition: width 0.1s linear;
+}
+
+/* ============================================================================
+ * 画面切替タブ
+ * ========================================================================== */
+
+.topbar-nav {
+  display: flex;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+
+.topbar-nav button {
+  background: transparent;
+  border: 1px solid transparent;
+  color: #9fb0c4;
+  padding: 4px 8px;
+  border-radius: 4px;
+  font-size: 12px;
+  cursor: pointer;
+}
+
+.topbar-nav button:hover {
+  color: var(--chrome-text);
+  background: rgba(255, 255, 255, 0.08);
+}
+
+.topbar-nav button.active {
+  color: #ffffff;
+  background: rgba(255, 255, 255, 0.14);
+  border-color: rgba(255, 255, 255, 0.22);
+}
+
+/* ============================================================================
+ * 死にポジション分析ページ
+ * ========================================================================== */
+
+.page-area {
+  flex: 1 1 auto;
+  overflow: auto;
+  background: var(--bg);
+}
+
+.dead-position {
+  max-width: 1040px;
+  margin: 0 auto;
+  padding: 16px 16px 48px;
+}
+
+.dp-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: center;
+  justify-content: space-between;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 10px 12px;
+  margin-bottom: 14px;
+}
+
+.dp-toolbar-group {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.dp-toolbar label {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+}
+
+.dp-hint {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.dp-empty {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 16px;
+  color: var(--muted);
+}
+
+.dp-hero {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+
+.dp-hero-main {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.dp-hero-label {
+  font-size: 12px;
+  color: var(--muted);
+  margin-right: 4px;
+}
+
+.dp-hero-value {
+  font-size: 30px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.dp-hero-after {
+  color: var(--accent);
+}
+
+.dp-hero-arrow {
+  font-size: 18px;
+  color: var(--muted);
+}
+
+.dp-hero-delta {
+  font-size: 15px;
+  font-weight: 600;
+  padding: 2px 8px;
+  border-radius: 4px;
+  font-variant-numeric: tabular-nums;
+}
+
+.dp-hero-delta.good {
+  color: #0a7a0a;
+  background: #e8f6e8;
+}
+
+.dp-hero-delta.bad {
+  color: #a82b2b;
+  background: #fbeaea;
+}
+
+.dp-hero-sub {
+  margin-top: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.dp-section {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 12px 14px 14px;
+  margin-bottom: 14px;
+}
+
+.dp-section h2 {
+  font-size: 13px;
+  margin: 0 0 10px;
+}
+
+.dp-section h3 {
+  font-size: 12px;
+  margin: 14px 0 6px;
+  color: var(--muted);
+}
+
+.dp-columns {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 18px;
+}
+
+.dp-columns > div > h2 {
+  margin-top: 0;
+}
+
+.dp-table {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.dp-table th,
+.dp-table td {
+  border: 1px solid var(--border);
+  padding: 4px 8px;
+  text-align: right;
+}
+
+.dp-table thead th,
+.dp-table tbody th {
+  background: #f7f9fb;
+  text-align: left;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.dp-table thead th {
+  text-align: right;
+}
+
+.dp-table thead th:first-child {
+  text-align: left;
+}
+
+.dp-metrics td:last-child {
+  font-weight: 600;
+}
+
+.dp-table tr.dp-selected th,
+.dp-table tr.dp-selected td {
+  background: #eaf2fd;
+}
+
+.dp-input-table input {
+  width: 78px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.dp-scroll {
+  overflow-x: auto;
+}
+
+.dp-note {
+  margin: 8px 0 0;
+  font-size: 11px;
+  color: var(--muted);
+  line-height: 1.6;
+}
+
+.dp-warnings {
+  margin: 0;
+  padding-left: 18px;
+  font-size: 12px;
+  line-height: 1.8;
+}
+
+.dp-chart {
+  overflow-x: auto;
+}
+
+.lane-chart {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+
+/* -------------------------------------------------------------------- 印刷 */
+
+@media print {
+  html,
+  body,
+  #root {
+    height: auto;
+    overflow: visible;
+  }
+
+  .topbar,
+  .no-print {
+    display: none !important;
+  }
+
+  .page-area {
+    overflow: visible;
+    background: #ffffff;
+  }
+
+  .dead-position {
+    max-width: none;
+    padding: 0;
+  }
+
+  .dp-section,
+  .dp-hero {
+    border-color: #c9d4e2;
+    break-inside: avoid;
+  }
+
+  .dp-chart {
+    overflow: visible;
+  }
 }

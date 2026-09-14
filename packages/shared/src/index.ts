@@ -30,6 +30,10 @@ export * from './sim/heatmap.js';
 export * from './sim/analysis.js';
 export * from './sim/stacking.js';
 
+export * from './analysis/laneCapacity.js';
+export * from './analysis/deadPosition.js';
+export * from './analysis/sampleDeadPosition.js';
+
 export * from './io/csv.js';
 export * from './io/exporters.js';
 

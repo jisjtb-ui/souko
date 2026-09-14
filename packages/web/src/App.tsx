@@ -7,7 +7,11 @@ import { Toolbar } from './components/Toolbar';
 import { TopBar } from './components/TopBar';
 import { MasterDialog } from './components/MasterDialog';
 import { WarehouseDialog } from './components/WarehouseDialog';
+import { DeadPositionPage } from './pages/DeadPositionPage';
 import { useEditorStore } from './store/editorStore';
+
+/** 画面。平面図エディタと分析ページは独立していて、状態はストアに残る。 */
+export type Page = 'editor' | 'dead-position';
 
 export default function App(): JSX.Element {
   const bootstrap = useEditorStore((s) => s.bootstrap);
@@ -16,6 +20,7 @@ export default function App(): JSX.Element {
   const warehouse = useEditorStore((s) => s.warehouse);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [mastersOpen, setMastersOpen] = useState(false);
+  const [page, setPage] = useState<Page>('editor');
 
   useEffect(() => {
     void bootstrap();
@@ -99,20 +104,33 @@ export default function App(): JSX.Element {
 
   return (
     <div className="app">
-      <TopBar onOpenSettings={() => setSettingsOpen(true)} onOpenMasters={() => setMastersOpen(true)} />
+      <TopBar
+        page={page}
+        onChangePage={setPage}
+        onOpenSettings={() => setSettingsOpen(true)}
+        onOpenMasters={() => setMastersOpen(true)}
+      />
 
-      <div className="workspace">
-        <Toolbar />
-        <main className="canvas-area">
-          {loading && <div className="overlay-message">読み込み中…</div>}
-          {!loading && !warehouse && <div className="overlay-message">倉庫がありません。「倉庫設定」から作成してください。</div>}
-          {error && <div className="overlay-message error">{error}</div>}
-          <WarehouseCanvas />
+      {page === 'editor' ? (
+        <>
+          <div className="workspace">
+            <Toolbar />
+            <main className="canvas-area">
+              {loading && <div className="overlay-message">読み込み中…</div>}
+              {!loading && !warehouse && <div className="overlay-message">倉庫がありません。「倉庫設定」から作成してください。</div>}
+              {error && <div className="overlay-message error">{error}</div>}
+              <WarehouseCanvas />
+            </main>
+            <Inspector />
+          </div>
+
+          <EventLog />
+        </>
+      ) : (
+        <main className="page-area">
+          <DeadPositionPage />
         </main>
-        <Inspector />
-      </div>
-
-      <EventLog />
+      )}
 
       <RackDialog />
       {settingsOpen && <WarehouseDialog onClose={() => setSettingsOpen(false)} />}
